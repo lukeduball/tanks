@@ -1,6 +1,6 @@
 use glam::{Mat4, Vec2, Vec3};
-use wgpu::util::DeviceExt;
-use xenofrost::core::{app::App, input_manager::InputManager, render_engine::{camera::{Camera, CameraBindGroupLayout, CameraProjection, OrthographicProjection}, mesh::QuadMesh, pipeline::Pipeline2D, AspectRatio, DrawMesh, InstanceRaw, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Transform2D, World}};
+use wgpu::{util::DeviceExt, BindGroupDescriptor, BindGroupEntry};
+use xenofrost::{core::{app::App, input_manager::InputManager, render_engine::{camera::{Camera, CameraProjection, OrthographicProjection}, mesh::QuadMesh, pipeline::Pipeline2D, texture::{Texture, TextureBindGroupLayout}, AspectRatio, DrawMesh, InstanceRaw, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Transform2D, World}}, include_bytes_from_project_path};
 
 const BASELINE_NUMBER_OF_RESOURCES: u64 = xenofrost::NUMBER_OF_RESOURCES;
 const BASELINE_NUMBER_OF_COMPONENTS: u64 = xenofrost::NUMBER_OF_COMPONENTS;
@@ -54,6 +54,44 @@ impl RenderCircleInstances {
     }
 }
 
+#[derive(Resource)]
+struct TanksTextureAtlasBindGroup {
+    _texture: Texture,
+    bind_group: wgpu::BindGroup
+}
+
+impl TanksTextureAtlasBindGroup {
+    fn new(world: &mut World) -> Self {
+        let render_engine = query_resource!(world, RenderEngine).unwrap();
+        let texture_bind_group_layout = query_resource!(world, TextureBindGroupLayout).unwrap();
+
+        let texture_atlas = Texture::from_bytes(
+            &render_engine.data().device, 
+            &render_engine.data().queue, 
+            include_bytes_from_project_path!("/res/game_objects/tank_texture_atlas.png"), 
+            "Tanks Texture Atlas"
+        );
+
+        Self {
+            bind_group: render_engine.data().device.create_bind_group(&BindGroupDescriptor {
+                label: Some("Tanks Texture Atlas Bind Group"),
+                layout: &texture_bind_group_layout.data().bind_group_layout,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&texture_atlas.view),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&texture_atlas.sampler),
+                    }
+                ],
+            }),
+            _texture: texture_atlas,
+        }
+    }
+}
+
 #[derive(Component)]
 pub struct RenderCircle;
 
@@ -62,13 +100,13 @@ fn startup_system(world: &mut World) {
 
     let quad_mesh = QuadMesh::new(&render_engine.data().device);
     world.add_resource(quad_mesh);
-
-    let camera_bind_group_layout = CameraBindGroupLayout::new(&render_engine);
-    world.add_resource(camera_bind_group_layout);
     
     let pipeline2d = Pipeline2D::new(world);
     world.add_resource(pipeline2d);
     world.add_resource(RenderCircleInstances::new(&render_engine.data().device));
+
+    let tanks_texture_atlas_bind_group = TanksTextureAtlasBindGroup::new(world);
+    world.add_resource(tanks_texture_atlas_bind_group);
 
     let aspect_ratio = query_resource!(world, AspectRatio).unwrap();
 
@@ -177,11 +215,14 @@ fn circles_render_system(world: &mut World) {
     let quad_mesh = quad_mesh_handle.data();
     let primary_render_pass = query_resource!(world, PrimaryRenderPass).unwrap();
 
+    let texture_atlas_bind_group = query_resource!(world, TanksTextureAtlasBindGroup).unwrap();
+
     let camera_query = world_query!(Camera);
     let camera_query_invoke = camera_query(world);
     let (_, camera) = camera_query_invoke.iter().next().unwrap();
 
     primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_pipeline(&pipeline2d.data().pipeline);
     primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_vertex_buffer(1, circle_instances.data().instances_buffer.slice(..));
+    primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_bind_group(1, &texture_atlas_bind_group.data().bind_group, &[]);
     primary_render_pass.data_mut().render_pass.as_mut().unwrap().draw_mesh_instanced(&quad_mesh.mesh, 0..1 as u32, &camera.camera_bind_group);
 }
