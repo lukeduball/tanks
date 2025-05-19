@@ -8,7 +8,7 @@ cfg-if = "1"
 xenofrost = { path = "../xenofrost" }
 wgpu = "22.0"
 bytemuck = {version = "1.16", features = ["derive"] }
-glam = "0.28"
+glam = {version = "0.30", features = ["bytemuck"]}
 log = "0.4"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

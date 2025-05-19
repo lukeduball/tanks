@@ -1,6 +1,6 @@
 use glam::{Mat4, Vec2, Vec3};
 use wgpu::{util::DeviceExt, BindGroupDescriptor, BindGroupEntry};
-use xenofrost::{core::{app::App, input_manager::InputManager, render_engine::{camera::{Camera, CameraProjection, OrthographicProjection}, mesh::QuadMesh, pipeline::Pipeline2D, texture::{Texture, TextureBindGroupLayout}, AspectRatio, DrawMesh, InstanceRaw, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Transform2D, World}}, include_bytes_from_project_path};
+use xenofrost::{core::{app::App, input_manager::InputManager, render_engine::{camera::{Camera, CameraProjection, OrthographicProjection}, mesh::AtlasQuadMesh, pipeline::{AtlasPipeline2D, InstanceAtlas}, texture::{Texture, TextureBindGroupLayout}, AspectRatio, DrawMesh, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Transform2D, World}}, include_bytes_from_project_path};
 
 const BASELINE_NUMBER_OF_RESOURCES: u64 = xenofrost::NUMBER_OF_RESOURCES;
 const BASELINE_NUMBER_OF_COMPONENTS: u64 = xenofrost::NUMBER_OF_COMPONENTS;
@@ -29,7 +29,7 @@ pub fn run() {
 
 #[derive(Resource)]
 pub struct RenderCircleInstances {
-    pub instances: Vec<InstanceRaw>,
+    pub instances: Vec<InstanceAtlas>,
     pub prev_size: usize,
     pub instances_buffer: wgpu::Buffer,
 }
@@ -98,10 +98,10 @@ pub struct RenderCircle;
 fn startup_system(world: &mut World) {
     let render_engine = query_resource!(world, RenderEngine).unwrap();
 
-    let quad_mesh = QuadMesh::new(&render_engine.data().device);
+    let quad_mesh = AtlasQuadMesh::new(&render_engine.data().device);
     world.add_resource(quad_mesh);
     
-    let pipeline2d = Pipeline2D::new(world);
+    let pipeline2d = AtlasPipeline2D::new(world);
     world.add_resource(pipeline2d);
     world.add_resource(RenderCircleInstances::new(&render_engine.data().device));
 
@@ -186,8 +186,10 @@ fn circle_prepare_system(world: &mut World) {
 
     circle_instances.data_mut().instances.clear();
     for (_, tranform2d, _) in circles_query(world).iter() {
-        let raw_instance = InstanceRaw {
-            model: Mat4::from_translation(Vec3::new(tranform2d.translation.x, tranform2d.translation.y, 0.0)).to_cols_array_2d()
+        let raw_instance = InstanceAtlas {
+            model: Mat4::from_translation(Vec3::new(tranform2d.translation.x, tranform2d.translation.y, 0.0)),
+            tex_coords: Vec2::new(0.0, 0.0),
+            sprite_size: Vec2::new(0.0625, 0.0625)
         };
         circle_instances.data_mut().instances.push(raw_instance);
     }
@@ -209,9 +211,9 @@ fn circle_prepare_system(world: &mut World) {
 }
 
 fn circles_render_system(world: &mut World) {
-    let pipeline2d = query_resource!(world, Pipeline2D).unwrap();
+    let pipeline2d = query_resource!(world, AtlasPipeline2D).unwrap();
     let circle_instances = query_resource!(world, RenderCircleInstances).unwrap();
-    let quad_mesh_handle = query_resource!(world, QuadMesh).unwrap();
+    let quad_mesh_handle = query_resource!(world, AtlasQuadMesh).unwrap();
     let quad_mesh = quad_mesh_handle.data();
     let primary_render_pass = query_resource!(world, PrimaryRenderPass).unwrap();
 
