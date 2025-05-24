@@ -1,6 +1,6 @@
 use glam::{Mat4, Vec2, Vec3};
 use wgpu::{util::DeviceExt, BindGroupDescriptor, BindGroupEntry};
-use xenofrost::{core::{app::App, input_manager::{InputManager}, render_engine::{camera::{Camera, CameraProjection, OrthographicProjection}, mesh::AtlasQuadMesh, pipeline::{AtlasPipeline2D, InstanceAtlas}, texture::{Texture, TextureBindGroupLayout}, AspectRatio, DrawMesh, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Transform2D, World}}, include_bytes_from_project_path};
+use xenofrost::{core::{app::App, input_manager::{InputManager, KeyCode}, render_engine::{camera::{Camera, CameraProjection, OrthographicProjection}, mesh::AtlasQuadMesh, pipeline::{AtlasPipeline2D, InstanceAtlas}, texture::{Texture, TextureBindGroupLayout}, AspectRatio, DrawMesh, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Transform2D, World}}, include_bytes_from_project_path};
 
 const BASELINE_NUMBER_OF_RESOURCES: u64 = xenofrost::NUMBER_OF_RESOURCES;
 const BASELINE_NUMBER_OF_COMPONENTS: u64 = xenofrost::NUMBER_OF_COMPONENTS;
@@ -107,6 +107,13 @@ impl RenderCircle {
 fn startup_system(world: &mut World) {
     let render_engine = query_resource!(world, RenderEngine).unwrap();
 
+    let input_manager = query_resource!(world, InputManager).unwrap();
+    input_manager.data_mut().register_key_binding("up", KeyCode::KeyW);
+    input_manager.data_mut().register_key_binding("down", KeyCode::KeyS);
+    input_manager.data_mut().register_key_binding("left", KeyCode::KeyA);
+    input_manager.data_mut().register_key_binding("right", KeyCode::KeyD);
+    input_manager.data_mut().register_key_binding("atlas_toggle", KeyCode::Space);
+
     let quad_mesh = AtlasQuadMesh::new(&render_engine.data().device);
     world.add_resource(quad_mesh);
     
@@ -156,7 +163,6 @@ fn circles_atlas_update_system(world: &mut World) {
     for (_, mut atlas_object) in atlas_object_query(world).iter() {
         if atlas_toggle_key_state.get_was_pressed() {
             atlas_object.atlas_index += 1;
-            println!("{}", atlas_object.atlas_index);
         }
     }
 }
