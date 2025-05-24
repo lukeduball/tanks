@@ -1,6 +1,6 @@
 use glam::{Mat4, Vec2, Vec3};
 use wgpu::{util::DeviceExt, BindGroupDescriptor, BindGroupEntry};
-use xenofrost::{core::{app::App, input_manager::InputManager, render_engine::{camera::{Camera, CameraProjection, OrthographicProjection}, mesh::AtlasQuadMesh, pipeline::{AtlasPipeline2D, InstanceAtlas}, texture::{Texture, TextureBindGroupLayout}, AspectRatio, DrawMesh, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Transform2D, World}}, include_bytes_from_project_path};
+use xenofrost::{core::{app::App, input_manager::{InputManager}, render_engine::{camera::{Camera, CameraProjection, OrthographicProjection}, mesh::AtlasQuadMesh, pipeline::{AtlasPipeline2D, InstanceAtlas}, texture::{Texture, TextureBindGroupLayout}, AspectRatio, DrawMesh, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Transform2D, World}}, include_bytes_from_project_path};
 
 const BASELINE_NUMBER_OF_RESOURCES: u64 = xenofrost::NUMBER_OF_RESOURCES;
 const BASELINE_NUMBER_OF_COMPONENTS: u64 = xenofrost::NUMBER_OF_COMPONENTS;
@@ -20,6 +20,7 @@ pub fn run() {
     let mut app = App::new("tanks");
     app.add_startup_system(Box::new(startup_system));
     app.add_update_system(Box::new(camera_controller_system));
+    app.add_update_system(Box::new(circles_atlas_update_system));
     app.add_prepare_system(Box::new(camera_prepare_system));
     app.add_prepare_system(Box::new(circle_prepare_system));
     app.add_render_system(Box::new(circles_render_system));
@@ -93,7 +94,15 @@ impl TanksTextureAtlasBindGroup {
 }
 
 #[derive(Component)]
-pub struct RenderCircle;
+pub struct RenderCircle {
+    atlas_index: u32
+}
+
+impl RenderCircle {
+    fn new(atlas_index: u32) -> Self {
+        Self {atlas_index}
+    }
+}
 
 fn startup_system(world: &mut World) {
     let render_engine = query_resource!(world, RenderEngine).unwrap();
@@ -130,12 +139,26 @@ fn startup_system(world: &mut World) {
     world.add_component_to_entity(camera_entity, camera_component);
 
     let circle = world.spawn_entity();
-    world.add_component_to_entity(circle, RenderCircle);
+    world.add_component_to_entity(circle, RenderCircle::new(0));
     world.add_component_to_entity(circle, Transform2D {
         translation: Vec2::new(0.0, 0.0),
         scale: Vec2::new(1.0, 1.0),
         rotation: 0.0
     });
+}
+
+fn circles_atlas_update_system(world: &mut World) {
+    let input_manager_handle = query_resource!(world, InputManager).unwrap();
+    let input_manager = input_manager_handle.data();
+    let atlas_toggle_key_state = input_manager.get_key_state("atlas_toggle").unwrap();
+
+    let atlas_object_query = world_query!(mut RenderCircle);
+    for (_, mut atlas_object) in atlas_object_query(world).iter() {
+        if atlas_toggle_key_state.get_was_pressed() {
+            atlas_object.atlas_index += 1;
+            println!("{}", atlas_object.atlas_index);
+        }
+    }
 }
 
 fn camera_controller_system(world: &mut World) {
@@ -185,10 +208,12 @@ fn circle_prepare_system(world: &mut World) {
     let circles_query = world_query!(Transform2D, RenderCircle);
 
     circle_instances.data_mut().instances.clear();
-    for (_, tranform2d, _) in circles_query(world).iter() {
+    for (_, tranform2d, atlas_object) in circles_query(world).iter() {
+        let atlas_tex_coords_x = atlas_object.atlas_index % 16;
+        let atlas_tex_coords_y = atlas_object.atlas_index / 16;
         let raw_instance = InstanceAtlas {
             model: Mat4::from_translation(Vec3::new(tranform2d.translation.x, tranform2d.translation.y, 0.0)),
-            tex_coords: Vec2::new(0.0, 0.0),
+            tex_coords: Vec2::new(0.0625*atlas_tex_coords_x as f32, 0.0625*atlas_tex_coords_y as f32),
             sprite_size: Vec2::new(0.0625, 0.0625)
         };
         circle_instances.data_mut().instances.push(raw_instance);
