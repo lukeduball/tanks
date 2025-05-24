@@ -19,27 +19,27 @@ pub fn run() {
 
     let mut app = App::new("tanks");
     app.add_startup_system(Box::new(startup_system));
-    app.add_update_system(Box::new(camera_controller_system));
     app.add_update_system(Box::new(circles_atlas_update_system));
+    app.add_update_system(Box::new(player_controller_system));
     app.add_prepare_system(Box::new(camera_prepare_system));
-    app.add_prepare_system(Box::new(circle_prepare_system));
-    app.add_render_system(Box::new(circles_render_system));
+    app.add_prepare_system(Box::new(tanks_prepare_system));
+    app.add_render_system(Box::new(tanks_render_system));
 
     app.run();
 }
 
 #[derive(Resource)]
-pub struct RenderCircleInstances {
+pub struct RenderTankInstances {
     pub instances: Vec<InstanceAtlas>,
     pub prev_size: usize,
     pub instances_buffer: wgpu::Buffer,
 }
 
-impl RenderCircleInstances {
+impl RenderTankInstances {
     pub fn new(device: &wgpu::Device) -> Self {
         let instances = Vec::new();
         let instances_buffer = device.create_buffer(&wgpu::BufferDescriptor { 
-            label: Some("Circle Instances"), 
+            label: Some("Tank Instances"), 
             size: 1, 
             usage: wgpu::BufferUsages::VERTEX, 
             mapped_at_creation: false 
@@ -94,11 +94,14 @@ impl TanksTextureAtlasBindGroup {
 }
 
 #[derive(Component)]
-pub struct RenderCircle {
+pub struct RenderTank {
     atlas_index: u32
 }
 
-impl RenderCircle {
+#[derive(Component)]
+struct PlayerController;
+
+impl RenderTank {
     fn new(atlas_index: u32) -> Self {
         Self {atlas_index}
     }
@@ -119,7 +122,7 @@ fn startup_system(world: &mut World) {
     
     let pipeline2d = AtlasPipeline2D::new(world);
     world.add_resource(pipeline2d);
-    world.add_resource(RenderCircleInstances::new(&render_engine.data().device));
+    world.add_resource(RenderTankInstances::new(&render_engine.data().device));
 
     let tanks_texture_atlas_bind_group = TanksTextureAtlasBindGroup::new(world);
     world.add_resource(tanks_texture_atlas_bind_group);
@@ -145,13 +148,14 @@ fn startup_system(world: &mut World) {
     );
     world.add_component_to_entity(camera_entity, camera_component);
 
-    let circle = world.spawn_entity();
-    world.add_component_to_entity(circle, RenderCircle::new(0));
-    world.add_component_to_entity(circle, Transform2D {
+    let player_tank = world.spawn_entity();
+    world.add_component_to_entity(player_tank, RenderTank::new(0));
+    world.add_component_to_entity(player_tank, Transform2D {
         translation: Vec2::new(0.0, 0.0),
         scale: Vec2::new(1.0, 1.0),
         rotation: 0.0
     });
+    world.add_component_to_entity(player_tank, PlayerController);
 }
 
 fn circles_atlas_update_system(world: &mut World) {
@@ -159,7 +163,7 @@ fn circles_atlas_update_system(world: &mut World) {
     let input_manager = input_manager_handle.data();
     let atlas_toggle_key_state = input_manager.get_key_state("atlas_toggle").unwrap();
 
-    let atlas_object_query = world_query!(mut RenderCircle);
+    let atlas_object_query = world_query!(mut RenderTank);
     for (_, mut atlas_object) in atlas_object_query(world).iter() {
         if atlas_toggle_key_state.get_was_pressed() {
             atlas_object.atlas_index += 1;
@@ -167,13 +171,13 @@ fn circles_atlas_update_system(world: &mut World) {
     }
 }
 
-fn camera_controller_system(world: &mut World) {
+fn player_controller_system(world: &mut World) {
     let speed = 0.01;
 
     let input_manager_handle = query_resource!(world, InputManager).unwrap();
-    let camera_query = world_query!(mut Transform2D, Camera);
-    let camera_query_invoke = camera_query(world);
-    let (_, mut transform2d, _) = camera_query_invoke.iter().next().unwrap();
+    let player_tank_query = world_query!(mut Transform2D, PlayerController);
+    let player_tank_query_invoke = player_tank_query(world);
+    let (_, mut transform2d, _) = player_tank_query_invoke.iter().next().unwrap();
 
     let input_manager = input_manager_handle.data();
     let left_key_state = input_manager.get_key_state("left").unwrap();
@@ -208,13 +212,13 @@ fn camera_prepare_system(world: &mut World) {
     }
 }
 
-fn circle_prepare_system(world: &mut World) {
+fn tanks_prepare_system(world: &mut World) {
     let render_engine = query_resource!(world, RenderEngine).unwrap();
-    let circle_instances = query_resource!(world, RenderCircleInstances).unwrap();
-    let circles_query = world_query!(Transform2D, RenderCircle);
+    let tank_instances = query_resource!(world, RenderTankInstances).unwrap();
+    let tanks_query = world_query!(Transform2D, RenderTank);
 
-    circle_instances.data_mut().instances.clear();
-    for (_, tranform2d, atlas_object) in circles_query(world).iter() {
+    tank_instances.data_mut().instances.clear();
+    for (_, tranform2d, atlas_object) in tanks_query(world).iter() {
         let atlas_tex_coords_x = atlas_object.atlas_index % 16;
         let atlas_tex_coords_y = atlas_object.atlas_index / 16;
         let raw_instance = InstanceAtlas {
@@ -222,28 +226,28 @@ fn circle_prepare_system(world: &mut World) {
             tex_coords: Vec2::new(0.0625*atlas_tex_coords_x as f32, 0.0625*atlas_tex_coords_y as f32),
             sprite_size: Vec2::new(0.0625, 0.0625)
         };
-        circle_instances.data_mut().instances.push(raw_instance);
+        tank_instances.data_mut().instances.push(raw_instance);
     }
 
-    if circle_instances.data().instances.len() != circle_instances.data().prev_size {
-        circle_instances.data_mut().instances_buffer.destroy();
+    if tank_instances.data().instances.len() != tank_instances.data().prev_size {
+        tank_instances.data_mut().instances_buffer.destroy();
         let new_instances_buffer = render_engine.data().device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Circle Instance Buffer"),
-            contents: bytemuck::cast_slice(&circle_instances.data().instances),
+            label: Some("Tanks Instance Buffer"),
+            contents: bytemuck::cast_slice(&tank_instances.data().instances),
             usage: wgpu::BufferUsages::VERTEX
         });
-        circle_instances.data_mut().instances_buffer = new_instances_buffer;
+        tank_instances.data_mut().instances_buffer = new_instances_buffer;
     }
     else {
-        render_engine.data().queue.write_buffer(&circle_instances.data().instances_buffer, 0, bytemuck::cast_slice(&circle_instances.data().instances));
+        render_engine.data().queue.write_buffer(&tank_instances.data().instances_buffer, 0, bytemuck::cast_slice(&tank_instances.data().instances));
     }
 
 
 }
 
-fn circles_render_system(world: &mut World) {
+fn tanks_render_system(world: &mut World) {
     let pipeline2d = query_resource!(world, AtlasPipeline2D).unwrap();
-    let circle_instances = query_resource!(world, RenderCircleInstances).unwrap();
+    let tank_instances = query_resource!(world, RenderTankInstances).unwrap();
     let quad_mesh_handle = query_resource!(world, AtlasQuadMesh).unwrap();
     let quad_mesh = quad_mesh_handle.data();
     let primary_render_pass = query_resource!(world, PrimaryRenderPass).unwrap();
@@ -255,7 +259,7 @@ fn circles_render_system(world: &mut World) {
     let (_, camera) = camera_query_invoke.iter().next().unwrap();
 
     primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_pipeline(&pipeline2d.data().pipeline);
-    primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_vertex_buffer(1, circle_instances.data().instances_buffer.slice(..));
+    primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_vertex_buffer(1, tank_instances.data().instances_buffer.slice(..));
     primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_bind_group(1, &texture_atlas_bind_group.data().bind_group, &[]);
     primary_render_pass.data_mut().render_pass.as_mut().unwrap().draw_mesh_instanced(&quad_mesh.mesh, 0..1 as u32, &camera.camera_bind_group);
 }
