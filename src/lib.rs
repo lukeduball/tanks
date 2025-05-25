@@ -1,4 +1,6 @@
-use glam::{Mat4, Vec2, Vec3};
+use std::f32::consts::PI;
+
+use glam::{IVec2, Mat4, Vec2, Vec3};
 use wgpu::{util::DeviceExt, BindGroupDescriptor, BindGroupEntry};
 use xenofrost::{core::{app::App, input_manager::{InputManager, KeyCode}, render_engine::{camera::{Camera, CameraProjection, OrthographicProjection}, mesh::AtlasQuadMesh, pipeline::{AtlasPipeline2D, InstanceAtlas}, texture::{Texture, TextureBindGroupLayout}, AspectRatio, DrawMesh, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Transform2D, World}}, include_bytes_from_project_path};
 
@@ -20,7 +22,7 @@ pub fn run() {
     let mut app = App::new("tanks");
     app.add_startup_system(Box::new(startup_system));
     app.add_update_system(Box::new(circles_atlas_update_system));
-    app.add_update_system(Box::new(player_controller_system));
+    app.add_update_system(Box::new(player_tank_controller_system));
     app.add_prepare_system(Box::new(camera_prepare_system));
     app.add_prepare_system(Box::new(tanks_prepare_system));
     app.add_render_system(Box::new(tanks_render_system));
@@ -171,31 +173,60 @@ fn circles_atlas_update_system(world: &mut World) {
     }
 }
 
-fn player_controller_system(world: &mut World) {
-    let speed = 0.01;
+fn player_tank_controller_system(world: &mut World) {
+    let rotation_speed = 0.1;
+    let movement_speed = 0.001;
 
     let input_manager_handle = query_resource!(world, InputManager).unwrap();
-    let player_tank_query = world_query!(mut Transform2D, PlayerController);
+    let player_tank_query = world_query!(mut Transform2D, PlayerController, RenderTank);
     let player_tank_query_invoke = player_tank_query(world);
-    let (_, mut transform2d, _) = player_tank_query_invoke.iter().next().unwrap();
+    let (_, mut transform2d, _, _) = player_tank_query_invoke.iter().next().unwrap();
 
     let input_manager = input_manager_handle.data();
     let left_key_state = input_manager.get_key_state("left").unwrap();
     let right_key_state = input_manager.get_key_state("right").unwrap();
     let up_key_state = input_manager.get_key_state("up").unwrap();
     let down_key_state = input_manager.get_key_state("down").unwrap();
+    let print_rotation_key = input_manager.get_key_state("atlas_toggle").unwrap();
+
+    let mut movement_direction = IVec2::new(0, 0);
 
     if left_key_state.get_is_down() {
-        transform2d.translation.x -= speed;
+        movement_direction.x -= 1;
     }
     if right_key_state.get_is_down() {
-        transform2d.translation.x += speed;
+        movement_direction.x += 1;
     }
     if up_key_state.get_is_down() {
-        transform2d.translation.y += speed;
+        movement_direction.y += 1;
     }
     if down_key_state.get_is_down() {
-        transform2d.translation.y -= speed;
+        movement_direction.y -= 1;
+    }
+
+    if movement_direction.x != 0 || movement_direction.y != 0 {
+        let target_degrees = f32::atan2(movement_direction.y as f32, movement_direction.x as f32).to_degrees();
+        let target_degrees_constrained = (target_degrees + 360.0) % 360.0;
+
+        let current_rotation = transform2d.rotation;
+
+        let mut rotation_diff_degrees = target_degrees_constrained - current_rotation;
+        let rotation_diff_degrees_abs = f32::abs(rotation_diff_degrees);
+        if rotation_diff_degrees_abs > 180.0 {rotation_diff_degrees *= -1.0; }
+
+        if rotation_diff_degrees_abs < 0.0001 {
+            transform2d.set_rotation(target_degrees_constrained);
+        }
+        else {
+            transform2d.rotate(rotation_diff_degrees.signum() * rotation_speed);
+        }
+
+        let movement_vector = Vec2::new(transform2d.rotation.to_radians().cos(), transform2d.rotation.to_radians().sin());
+        transform2d.translation += movement_vector * movement_speed; 
+    } 
+
+    if print_rotation_key.get_was_pressed() {
+        println!("{}", transform2d.rotation);
     }
 }
 
