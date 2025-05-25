@@ -1,5 +1,3 @@
-use std::f32::consts::PI;
-
 use glam::{IVec2, Mat4, Vec2, Vec3};
 use wgpu::{util::DeviceExt, BindGroupDescriptor, BindGroupEntry};
 use xenofrost::{core::{app::App, input_manager::{InputManager, KeyCode}, render_engine::{camera::{Camera, CameraProjection, OrthographicProjection}, mesh::AtlasQuadMesh, pipeline::{AtlasPipeline2D, InstanceAtlas}, texture::{Texture, TextureBindGroupLayout}, AspectRatio, DrawMesh, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Transform2D, World}}, include_bytes_from_project_path};
@@ -21,7 +19,6 @@ pub fn run() {
 
     let mut app = App::new("tanks");
     app.add_startup_system(Box::new(startup_system));
-    app.add_update_system(Box::new(circles_atlas_update_system));
     app.add_update_system(Box::new(player_tank_controller_system));
     app.add_prepare_system(Box::new(camera_prepare_system));
     app.add_prepare_system(Box::new(tanks_prepare_system));
@@ -96,18 +93,10 @@ impl TanksTextureAtlasBindGroup {
 }
 
 #[derive(Component)]
-pub struct RenderTank {
-    atlas_index: u32
-}
+pub struct RenderTank;
 
 #[derive(Component)]
 struct PlayerController;
-
-impl RenderTank {
-    fn new(atlas_index: u32) -> Self {
-        Self {atlas_index}
-    }
-}
 
 fn startup_system(world: &mut World) {
     let render_engine = query_resource!(world, RenderEngine).unwrap();
@@ -151,26 +140,13 @@ fn startup_system(world: &mut World) {
     world.add_component_to_entity(camera_entity, camera_component);
 
     let player_tank = world.spawn_entity();
-    world.add_component_to_entity(player_tank, RenderTank::new(0));
+    world.add_component_to_entity(player_tank, RenderTank);
     world.add_component_to_entity(player_tank, Transform2D {
         translation: Vec2::new(0.0, 0.0),
         scale: Vec2::new(1.0, 1.0),
         rotation: 0.0
     });
     world.add_component_to_entity(player_tank, PlayerController);
-}
-
-fn circles_atlas_update_system(world: &mut World) {
-    let input_manager_handle = query_resource!(world, InputManager).unwrap();
-    let input_manager = input_manager_handle.data();
-    let atlas_toggle_key_state = input_manager.get_key_state("atlas_toggle").unwrap();
-
-    let atlas_object_query = world_query!(mut RenderTank);
-    for (_, mut atlas_object) in atlas_object_query(world).iter() {
-        if atlas_toggle_key_state.get_was_pressed() {
-            atlas_object.atlas_index += 1;
-        }
-    }
 }
 
 fn player_tank_controller_system(world: &mut World) {
@@ -187,7 +163,6 @@ fn player_tank_controller_system(world: &mut World) {
     let right_key_state = input_manager.get_key_state("right").unwrap();
     let up_key_state = input_manager.get_key_state("up").unwrap();
     let down_key_state = input_manager.get_key_state("down").unwrap();
-    let print_rotation_key = input_manager.get_key_state("atlas_toggle").unwrap();
 
     let mut movement_direction = IVec2::new(0, 0);
 
@@ -223,10 +198,6 @@ fn player_tank_controller_system(world: &mut World) {
 
         let movement_vector = Vec2::new(transform2d.rotation.to_radians().cos(), transform2d.rotation.to_radians().sin());
         transform2d.translation += movement_vector * movement_speed; 
-    } 
-
-    if print_rotation_key.get_was_pressed() {
-        println!("{}", transform2d.rotation);
     }
 }
 
@@ -243,17 +214,46 @@ fn camera_prepare_system(world: &mut World) {
     }
 }
 
+fn get_tank_atlas_index(rotation: f32) -> u32 {
+    if (rotation > 348.75 || rotation <= 11.25) || (rotation > 168.75 && rotation <= 191.25) {
+        return 4;
+    }
+    else if (rotation > 11.25 && rotation <= 33.75) || (rotation > 191.25 && rotation <= 213.75) {
+        return 5;
+    }
+    else if (rotation > 33.75 && rotation <= 56.25) || (rotation > 213.75 && rotation <= 236.25) {
+        return 6;
+    }
+    else if (rotation > 56.25 && rotation <= 78.75) || (rotation > 236.25 && rotation <= 258.75) {
+        return 7;
+    }
+    else if (rotation > 78.75 && rotation <= 101.25) || (rotation > 258.75 && rotation <= 281.25) {
+        return 0;
+    }
+    else if (rotation > 101.25 && rotation <= 123.75) || (rotation > 281.25 && rotation <= 303.75) {
+        return 1;
+    }
+    else if (rotation > 123.75 && rotation <= 146.25) || (rotation > 303.75 && rotation <= 326.25) {
+        return 2;
+    }
+    else if (rotation > 146.25 && rotation <= 168.75) || (rotation > 326.25 && rotation <= 348.75) {
+        return 3;
+    }
+    0
+}
+
 fn tanks_prepare_system(world: &mut World) {
     let render_engine = query_resource!(world, RenderEngine).unwrap();
     let tank_instances = query_resource!(world, RenderTankInstances).unwrap();
     let tanks_query = world_query!(Transform2D, RenderTank);
 
     tank_instances.data_mut().instances.clear();
-    for (_, tranform2d, atlas_object) in tanks_query(world).iter() {
-        let atlas_tex_coords_x = atlas_object.atlas_index % 16;
-        let atlas_tex_coords_y = atlas_object.atlas_index / 16;
+    for (_, transform2d, _) in tanks_query(world).iter() {
+        let atlas_index = get_tank_atlas_index(transform2d.rotation);
+        let atlas_tex_coords_x = atlas_index % 16;
+        let atlas_tex_coords_y = atlas_index / 16;
         let raw_instance = InstanceAtlas {
-            model: Mat4::from_translation(Vec3::new(tranform2d.translation.x, tranform2d.translation.y, 0.0)),
+            model: Mat4::from_translation(Vec3::new(transform2d.translation.x, transform2d.translation.y, 0.0)),
             tex_coords: Vec2::new(0.0625*atlas_tex_coords_x as f32, 0.0625*atlas_tex_coords_y as f32),
             sprite_size: Vec2::new(0.0625, 0.0625)
         };
