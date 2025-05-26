@@ -93,7 +93,9 @@ impl TanksTextureAtlasBindGroup {
 }
 
 #[derive(Component)]
-pub struct RenderTank;
+pub struct RenderTank {
+    cannon_rotation: f32
+}
 
 #[derive(Component)]
 struct PlayerController;
@@ -106,7 +108,7 @@ fn startup_system(world: &mut World) {
     input_manager.data_mut().register_key_binding("down", KeyCode::KeyS);
     input_manager.data_mut().register_key_binding("left", KeyCode::KeyA);
     input_manager.data_mut().register_key_binding("right", KeyCode::KeyD);
-    input_manager.data_mut().register_key_binding("atlas_toggle", KeyCode::Space);
+    input_manager.data_mut().register_key_binding("space", KeyCode::Space);
 
     let quad_mesh = AtlasQuadMesh::new(&render_engine.data().device);
     world.add_resource(quad_mesh);
@@ -140,7 +142,7 @@ fn startup_system(world: &mut World) {
     world.add_component_to_entity(camera_entity, camera_component);
 
     let player_tank = world.spawn_entity();
-    world.add_component_to_entity(player_tank, RenderTank);
+    world.add_component_to_entity(player_tank, RenderTank {cannon_rotation: 0.0});
     world.add_component_to_entity(player_tank, Transform2D {
         translation: Vec2::new(0.0, 0.0),
         scale: Vec2::new(1.0, 1.0),
@@ -153,16 +155,22 @@ fn player_tank_controller_system(world: &mut World) {
     let rotation_speed = 0.1;
     let movement_speed = 0.001;
 
+    let render_engine = query_resource!(world, RenderEngine).unwrap();
     let input_manager_handle = query_resource!(world, InputManager).unwrap();
-    let player_tank_query = world_query!(mut Transform2D, PlayerController, RenderTank);
+    let player_tank_query = world_query!(mut Transform2D, PlayerController, mut RenderTank);
     let player_tank_query_invoke = player_tank_query(world);
-    let (_, mut transform2d, _, _) = player_tank_query_invoke.iter().next().unwrap();
+    let (_, mut transform2d, _, mut cannon) = player_tank_query_invoke.iter().next().unwrap();
+
+    let camera_query = world_query!(Transform2D, Camera);
+    let camera_query_invoke = camera_query(world);
+    let (_, camera_transform2d, camera) = camera_query_invoke.iter().next().unwrap();
 
     let input_manager = input_manager_handle.data();
     let left_key_state = input_manager.get_key_state("left").unwrap();
     let right_key_state = input_manager.get_key_state("right").unwrap();
     let up_key_state = input_manager.get_key_state("up").unwrap();
     let down_key_state = input_manager.get_key_state("down").unwrap();
+    let space_key_state = input_manager.get_key_state("space").unwrap();
 
     let mut movement_direction = IVec2::new(0, 0);
 
@@ -199,6 +207,13 @@ fn player_tank_controller_system(world: &mut World) {
         let movement_vector = Vec2::new(transform2d.rotation.to_radians().cos(), transform2d.rotation.to_radians().sin());
         transform2d.translation += movement_vector * movement_speed; 
     }
+
+    let window_size = IVec2::new(render_engine.data().window_width as i32, render_engine.data().window_height as i32);
+    let pixel_mouse_coords = input_manager.get_mouse_physical();
+    let mouse_coords = camera.convert_screen_space_to_camera_space(Vec3::new(camera_transform2d.translation.x, camera_transform2d.translation.y, 0.0), Vec3::new(0.0, 0.0, 1.0), pixel_mouse_coords, window_size);
+    let tank_mouse_difference = Vec2::new(mouse_coords.x, mouse_coords.y) - transform2d.translation;
+    let rotation = (f32::atan2(tank_mouse_difference.y, tank_mouse_difference.x).to_degrees() + 360.0) % 360.0;
+    cannon.cannon_rotation = rotation;
 }
 
 fn camera_prepare_system(world: &mut World) {
@@ -242,22 +257,42 @@ fn get_tank_atlas_index(rotation: f32) -> u32 {
     0
 }
 
+fn get_tank_cannon_atlas_index(rotation: f32) -> u32 {
+    let step = 360.0 / 16.0;
+    let half_step = step / 2.0;
+    let adjusted_rotation = ((rotation + half_step) + 360.0) % 360.0;
+    let index = (adjusted_rotation / step) as u32;
+    index + 16
+}
+
 fn tanks_prepare_system(world: &mut World) {
     let render_engine = query_resource!(world, RenderEngine).unwrap();
     let tank_instances = query_resource!(world, RenderTankInstances).unwrap();
     let tanks_query = world_query!(Transform2D, RenderTank);
 
     tank_instances.data_mut().instances.clear();
-    for (_, transform2d, _) in tanks_query(world).iter() {
-        let atlas_index = get_tank_atlas_index(transform2d.rotation);
-        let atlas_tex_coords_x = atlas_index % 16;
-        let atlas_tex_coords_y = atlas_index / 16;
-        let raw_instance = InstanceAtlas {
+    for (_, transform2d, render_tank) in tanks_query(world).iter() {
+        let base_atlas_index = get_tank_atlas_index(transform2d.rotation);
+        let base_atlas_tex_coords_x = base_atlas_index % 16;
+        let base_atlas_tex_coords_y = base_atlas_index / 16;
+        let base_raw_instance = InstanceAtlas {
             model: Mat4::from_translation(Vec3::new(transform2d.translation.x, transform2d.translation.y, 0.0)),
-            tex_coords: Vec2::new(0.0625*atlas_tex_coords_x as f32, 0.0625*atlas_tex_coords_y as f32),
+            tex_coords: Vec2::new(0.0625*base_atlas_tex_coords_x as f32, 0.0625*base_atlas_tex_coords_y as f32),
             sprite_size: Vec2::new(0.0625, 0.0625)
         };
-        tank_instances.data_mut().instances.push(raw_instance);
+        //Add tank base instance
+        tank_instances.data_mut().instances.push(base_raw_instance);
+
+        let cannon_atlas_index = get_tank_cannon_atlas_index(render_tank.cannon_rotation);
+        let cannon_atlas_tex_coords_x = cannon_atlas_index % 16;
+        let cannon_atlas_tex_coords_y = cannon_atlas_index / 16;
+        let cannon_raw_instance = InstanceAtlas {
+            model: Mat4::from_translation(Vec3::new(transform2d.translation.x, transform2d.translation.y, 0.1)),
+            tex_coords: Vec2::new(0.0625*cannon_atlas_tex_coords_x as f32, 0.0625*cannon_atlas_tex_coords_y as f32),
+            sprite_size: Vec2::new(0.0625, 0.0625)
+        };
+        //Add tank cannon instance
+        tank_instances.data_mut().instances.push(cannon_raw_instance);
     }
 
     if tank_instances.data().instances.len() != tank_instances.data().prev_size {
@@ -292,5 +327,5 @@ fn tanks_render_system(world: &mut World) {
     primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_pipeline(&pipeline2d.data().pipeline);
     primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_vertex_buffer(1, tank_instances.data().instances_buffer.slice(..));
     primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_bind_group(1, &texture_atlas_bind_group.data().bind_group, &[]);
-    primary_render_pass.data_mut().render_pass.as_mut().unwrap().draw_mesh_instanced(&quad_mesh.mesh, 0..1 as u32, &camera.camera_bind_group);
+    primary_render_pass.data_mut().render_pass.as_mut().unwrap().draw_mesh_instanced(&quad_mesh.mesh, 0..tank_instances.data().instances.len() as u32, &camera.camera_bind_group);
 }
