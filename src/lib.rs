@@ -211,7 +211,8 @@ fn player_tank_controller_system(world: &mut World) {
     let window_size = IVec2::new(render_engine.data().window_width as i32, render_engine.data().window_height as i32);
     let pixel_mouse_coords = input_manager.get_mouse_physical();
     let mouse_coords = camera.convert_screen_space_to_camera_space(Vec3::new(camera_transform2d.translation.x, camera_transform2d.translation.y, 0.0), Vec3::new(0.0, 0.0, 1.0), pixel_mouse_coords, window_size);
-    let tank_mouse_difference = Vec2::new(mouse_coords.x, mouse_coords.y) - transform2d.translation;
+    let cannon_center = transform2d.translation + Vec2::new(0.0, 0.01875);
+    let tank_mouse_difference = Vec2::new(mouse_coords.x, mouse_coords.y) - cannon_center;
     let rotation = (f32::atan2(tank_mouse_difference.y, tank_mouse_difference.x).to_degrees() + 360.0) % 360.0;
     cannon.cannon_rotation = rotation;
 }
