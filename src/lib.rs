@@ -152,8 +152,8 @@ fn startup_system(world: &mut World) {
 }
 
 fn player_tank_controller_system(world: &mut World) {
-    let rotation_speed = 0.1;
-    let movement_speed = 0.001;
+    let rotation_speed = 0.5;
+    let movement_speed = 0.005;
 
     let render_engine = query_resource!(world, RenderEngine).unwrap();
     let input_manager_handle = query_resource!(world, InputManager).unwrap();
@@ -215,6 +215,10 @@ fn player_tank_controller_system(world: &mut World) {
     let tank_mouse_difference = Vec2::new(mouse_coords.x, mouse_coords.y) - cannon_center;
     let rotation = (f32::atan2(tank_mouse_difference.y, tank_mouse_difference.x).to_degrees() + 360.0) % 360.0;
     cannon.cannon_rotation = rotation;
+
+    if space_key_state.get_was_pressed() {
+        println!("{}", transform2d.translation)
+    }
 }
 
 fn camera_prepare_system(world: &mut World) {
