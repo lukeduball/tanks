@@ -1,6 +1,6 @@
 use glam::{IVec2, Mat4, Quat, Vec2, Vec3, Vec3Swizzles};
 use wgpu::{util::DeviceExt, BindGroupDescriptor, BindGroupEntry};
-use xenofrost::{core::{app::App, input_manager::{InputManager, KeyCode}, render_engine::{camera::{Camera, CameraProjection, OrthographicProjection}, mesh::{AtlasQuadMesh, QuadMesh}, pipeline::{AtlasPipeline2D, DebugBordersPipeline2D, InstanceAtlas, InstanceDebugShape, InstanceTransform}, texture::{Texture, TextureBindGroupLayout}, AspectRatio, DrawMesh, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Transform2D, World}}, include_bytes_from_project_path};
+use xenofrost::{core::{app::App, input_manager::{InputManager, KeyCode}, math::bounding2d::{BoundingBox2d, CollisionPrimitive2d}, render_engine::{camera::{Camera, CameraProjection, OrthographicProjection}, mesh::{AtlasQuadMesh, QuadMesh}, pipeline::{AtlasPipeline2D, DebugBordersPipeline2D, InstanceAtlas, InstanceDebugShape}, texture::{Texture, TextureBindGroupLayout}, AspectRatio, DrawMesh, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Colliders2d, Transform2D, World}}, include_bytes_from_project_path};
 
 const BASELINE_NUMBER_OF_RESOURCES: u64 = xenofrost::NUMBER_OF_RESOURCES;
 const BASELINE_NUMBER_OF_COMPONENTS: u64 = xenofrost::NUMBER_OF_COMPONENTS;
@@ -26,7 +26,9 @@ pub fn run() {
     app.add_update_system(Box::new(player_tank_controller_system));
     app.add_prepare_system(Box::new(camera_prepare_system));
     app.add_prepare_system(Box::new(tanks_prepare_system));
+    app.add_prepare_system(Box::new(debug_shapes_prepare_system));
     app.add_render_system(Box::new(tanks_render_system));
+    app.add_render_system(Box::new(debug_shapes_render_system));
 
     app.run();
 }
@@ -187,6 +189,9 @@ fn startup_system(world: &mut World) {
         rotation: 0.0
     });
     world.add_component_to_entity(player_tank, PlayerController);
+    let mut colliders = Colliders2d::new();
+    colliders.collider_list.push(CollisionPrimitive2d::Obb2d(BoundingBox2d::new(Vec2::new(0.0, -0.046875), Vec2::new(0.65625, 0.640625), 0.0)));
+    world.add_component_to_entity(player_tank, colliders);
 }
 
 fn player_tank_controller_system(world: &mut World) {
@@ -330,10 +335,7 @@ fn tanks_prepare_system(world: &mut World) {
     let tank_instances = query_resource!(world, RenderTankInstances).unwrap();
     let tanks_query = world_query!(Transform2D, RenderTank);
 
-    let debug_boarder_instances = query_resource!(world, DebugBoarderInstances).unwrap();
-
     tank_instances.data_mut().instances.clear();
-    debug_boarder_instances.data_mut().instances.clear();
     for (_, transform2d, render_tank) in tanks_query(world).iter() {
         let base_atlas_index = get_tank_atlas_index(transform2d.rotation);
         let base_atlas_tex_coords_x = base_atlas_index % 16;
@@ -356,13 +358,6 @@ fn tanks_prepare_system(world: &mut World) {
         };
         //Add tank cannon instance
         tank_instances.data_mut().instances.push(cannon_raw_instance);
-
-        let scale = Vec3::new(1.0, 1.0, 1.0);
-        let rotation = Quat::from_rotation_z(f32::to_radians(45.0));
-        let translation = Vec3::new(transform2d.translation.x, transform2d.translation.y, 0.2);
-        let model = Mat4::from_scale_rotation_translation(scale, rotation, translation);
-        let debug_border_raw_instance = InstanceDebugShape::new(model, scale.xy(), 0.05);
-        debug_boarder_instances.data_mut().instances.push(debug_border_raw_instance);
     }
 
     if tank_instances.data().instances.len() != tank_instances.data().prev_size {
@@ -376,6 +371,45 @@ fn tanks_prepare_system(world: &mut World) {
     }
     else {
         render_engine.data().queue.write_buffer(&tank_instances.data().instances_buffer, 0, bytemuck::cast_slice(&tank_instances.data().instances));
+    }
+}
+
+fn tanks_render_system(world: &mut World) {
+    let pipeline2d = query_resource!(world, AtlasPipeline2D).unwrap();
+    let tank_instances = query_resource!(world, RenderTankInstances).unwrap();
+    let atlas_quad_mesh_handle = query_resource!(world, AtlasQuadMesh).unwrap();
+    let atlas_quad_mesh = atlas_quad_mesh_handle.data();
+    let primary_render_pass = query_resource!(world, PrimaryRenderPass).unwrap();
+
+    let texture_atlas_bind_group = query_resource!(world, TanksTextureAtlasBindGroup).unwrap();
+
+    let camera_query = world_query!(Camera);
+    let camera_query_invoke = camera_query(world);
+    let (_, camera) = camera_query_invoke.iter().next().unwrap();
+
+    primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_pipeline(&pipeline2d.data().pipeline);
+    primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_vertex_buffer(1, tank_instances.data().instances_buffer.slice(..));
+    primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_bind_group(1, &texture_atlas_bind_group.data().bind_group, &[]);
+    primary_render_pass.data_mut().render_pass.as_mut().unwrap().draw_mesh_instanced(&atlas_quad_mesh.mesh, 0..tank_instances.data().instances.len() as u32, &camera.camera_bind_group);
+}
+
+fn debug_shapes_prepare_system(world: &mut World) {
+    let render_engine = query_resource!(world, RenderEngine).unwrap();
+    let colliders_query = world_query!(Transform2D, Colliders2d);
+    let debug_boarder_instances = query_resource!(world, DebugBoarderInstances).unwrap();
+
+    debug_boarder_instances.data_mut().instances.clear();
+    for (_, transform2d, colliders) in colliders_query(world).iter() {
+        for bb2d in &colliders.collider_list {
+            if let CollisionPrimitive2d::Obb2d(bb2d) = bb2d {
+                let scale = Vec3::new(bb2d.half_size.x, bb2d.half_size.y, 1.0);
+                let rotation = Quat::from_rotation_z(f32::to_radians(bb2d.rotation));
+                let translation = Vec3::new(transform2d.translation.x + bb2d.center.x, transform2d.translation.y + bb2d.center.y, 0.2);
+                let model = Mat4::from_scale_rotation_translation(scale, rotation, translation);
+                let debug_border_raw_instance = InstanceDebugShape::new(model, scale.xy(), 0.05);
+                debug_boarder_instances.data_mut().instances.push(debug_border_raw_instance);
+            }
+        }
     }
 
     if debug_boarder_instances.data().instances.len() != debug_boarder_instances.data().prev_size {
@@ -392,27 +426,16 @@ fn tanks_prepare_system(world: &mut World) {
     }
 }
 
-fn tanks_render_system(world: &mut World) {
-    let pipeline2d = query_resource!(world, AtlasPipeline2D).unwrap();
-    let debug_border_pipeline2d = query_resource!(world, DebugBordersPipeline2D).unwrap();
-    let tank_instances = query_resource!(world, RenderTankInstances).unwrap();
+fn debug_shapes_render_system(world: &mut World) {
     let debug_border_instances = query_resource!(world, DebugBoarderInstances).unwrap();
-    let atlas_quad_mesh_handle = query_resource!(world, AtlasQuadMesh).unwrap();
-    let atlas_quad_mesh = atlas_quad_mesh_handle.data();
     let quad_mesh_handle = query_resource!(world, QuadMesh).unwrap();
     let quad_mesh = quad_mesh_handle.data();
+    let debug_border_pipeline2d = query_resource!(world, DebugBordersPipeline2D).unwrap();
     let primary_render_pass = query_resource!(world, PrimaryRenderPass).unwrap();
-
-    let texture_atlas_bind_group = query_resource!(world, TanksTextureAtlasBindGroup).unwrap();
 
     let camera_query = world_query!(Camera);
     let camera_query_invoke = camera_query(world);
     let (_, camera) = camera_query_invoke.iter().next().unwrap();
-
-    primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_pipeline(&pipeline2d.data().pipeline);
-    primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_vertex_buffer(1, tank_instances.data().instances_buffer.slice(..));
-    primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_bind_group(1, &texture_atlas_bind_group.data().bind_group, &[]);
-    primary_render_pass.data_mut().render_pass.as_mut().unwrap().draw_mesh_instanced(&atlas_quad_mesh.mesh, 0..tank_instances.data().instances.len() as u32, &camera.camera_bind_group);
 
     primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_pipeline(&debug_border_pipeline2d.data().pipeline);
     primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_vertex_buffer(1, debug_border_instances.data().instances_buffer.slice(..));
