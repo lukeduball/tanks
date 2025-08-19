@@ -1,6 +1,6 @@
 use glam::{IVec2, Mat4, Quat, Vec2, Vec3, Vec3Swizzles};
 use wgpu::{util::DeviceExt, BindGroupDescriptor, BindGroupEntry};
-use xenofrost::{core::{app::App, input_manager::{InputManager, KeyCode}, math::bounding2d::{BoundingBox2d, CollisionPrimitive2d}, render_engine::{camera::{Camera, CameraProjection, OrthographicProjection}, mesh::{AtlasQuadMesh, QuadMesh}, pipeline::{AtlasPipeline2D, DebugBordersPipeline2D, InstanceAtlas, InstanceDebugShape}, texture::{Texture, TextureBindGroupLayout}, AspectRatio, DrawMesh, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Colliders2d, Transform2D, World}}, include_bytes_from_project_path};
+use xenofrost::{core::{app::App, input_manager::{InputManager, KeyCode}, math::bounding2d::Obb2d, render_engine::{camera::{Camera, CameraProjection, OrthographicProjection}, mesh::{AtlasQuadMesh, QuadMesh}, pipeline::{AtlasPipeline2D, DebugBordersPipeline2D, InstanceAtlas, InstanceDebugShape}, texture::{Texture, TextureBindGroupLayout}, AspectRatio, DrawMesh, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Collider2d, Colliders2d, Transform2d, World}}, include_bytes_from_project_path};
 
 const BASELINE_NUMBER_OF_RESOURCES: u64 = xenofrost::NUMBER_OF_RESOURCES;
 const BASELINE_NUMBER_OF_COMPONENTS: u64 = xenofrost::NUMBER_OF_COMPONENTS;
@@ -24,6 +24,7 @@ pub fn run() {
     app.add_startup_system(Box::new(startup_system));
     app.add_update_system(Box::new(world_border_system));
     app.add_update_system(Box::new(player_tank_controller_system));
+    app.add_update_system(Box::new(update_tank_bounding_boxes));
     app.add_prepare_system(Box::new(camera_prepare_system));
     app.add_prepare_system(Box::new(tanks_prepare_system));
     app.add_prepare_system(Box::new(debug_shapes_prepare_system));
@@ -163,7 +164,7 @@ fn startup_system(world: &mut World) {
     let aspect_ratio = query_resource!(world, AspectRatio).unwrap();
 
     let camera_entity = world.spawn_entity();
-    world.add_component_to_entity(camera_entity, Transform2D {
+    world.add_component_to_entity(camera_entity, Transform2d {
         translation: Vec2::new(0.0, 0.0),
         scale: Vec2::new(1.0, 1.0),
         rotation: 0.0
@@ -183,14 +184,21 @@ fn startup_system(world: &mut World) {
 
     let player_tank = world.spawn_entity();
     world.add_component_to_entity(player_tank, RenderTank {cannon_rotation: 0.0});
-    world.add_component_to_entity(player_tank, Transform2D {
+    world.add_component_to_entity(player_tank, Transform2d {
         translation: Vec2::new(0.0, 0.0),
         scale: Vec2::new(1.0, 1.0),
         rotation: 0.0
     });
     world.add_component_to_entity(player_tank, PlayerController);
     let mut colliders = Colliders2d::new();
-    colliders.collider_list.push(CollisionPrimitive2d::Obb2d(BoundingBox2d::new(Vec2::new(0.0, -0.046875), Vec2::new(0.65625, 0.640625), 0.0)));
+    colliders.collider_list.push(Collider2d::new(
+        Obb2d::new(Vec2::new(0.0, -0.046875), Vec2::new(0.65625, 0.640625), 0.0), 
+        Transform2d { 
+            translation: Vec2::splat(0.0), 
+            scale: Vec2::splat(1.0), 
+            rotation: 0.0 
+        })
+    );
     world.add_component_to_entity(player_tank, colliders);
 }
 
@@ -200,11 +208,11 @@ fn player_tank_controller_system(world: &mut World) {
 
     let render_engine = query_resource!(world, RenderEngine).unwrap();
     let input_manager_handle = query_resource!(world, InputManager).unwrap();
-    let player_tank_query = world_query!(mut Transform2D, PlayerController, mut RenderTank);
+    let player_tank_query = world_query!(mut Transform2d, PlayerController, mut RenderTank);
     let player_tank_query_invoke = player_tank_query(world);
     let (_, mut transform2d, _, mut cannon) = player_tank_query_invoke.iter().next().unwrap();
 
-    let camera_query = world_query!(Transform2D, Camera);
+    let camera_query = world_query!(Transform2d, Camera);
     let camera_query_invoke = camera_query(world);
     let (_, camera_transform2d, camera) = camera_query_invoke.iter().next().unwrap();
 
@@ -260,8 +268,18 @@ fn player_tank_controller_system(world: &mut World) {
     cannon.cannon_rotation = rotation;
 }
 
+fn update_tank_bounding_boxes(world: &mut World) {
+    let tank_bounding_box_query = world_query!(Transform2d, RenderTank, mut Colliders2d);
+
+    for (_, transform, _canon, mut obb_list) in tank_bounding_box_query(world).iter() {
+        obb_list.collider_list[0].obb2d.center = transform.translation + obb_list.collider_list[0].transform.translation;
+        obb_list.collider_list[0].obb2d.rotation = transform.rotation + obb_list.collider_list[0].transform.rotation;
+        
+    }
+}
+
 fn world_border_system(world: &mut World) {
-    let tanks_query = world_query!(mut Transform2D, RenderTank);
+    let tanks_query = world_query!(mut Transform2d, RenderTank);
     for (_, mut transform2d, _) in tanks_query(&world).iter() {
         if transform2d.translation.x <= -HALF_WORLD_WIDTH {
             transform2d.translation.x = -HALF_WORLD_WIDTH;
@@ -284,7 +302,7 @@ fn world_border_system(world: &mut World) {
 fn camera_prepare_system(world: &mut World) {
     let render_engine = query_resource!(world, RenderEngine).unwrap();
 
-    let camera_query = world_query!(Transform2D, mut Camera);
+    let camera_query = world_query!(Transform2d, mut Camera);
     if let Some((_, transform2d, mut camera)) = camera_query(world).iter().next() {
         camera.update_uniform_buffer(
             Vec3::new(transform2d.translation.x, transform2d.translation.y, -1.0),
@@ -333,7 +351,7 @@ fn get_tank_cannon_atlas_index(rotation: f32) -> u32 {
 fn tanks_prepare_system(world: &mut World) {
     let render_engine = query_resource!(world, RenderEngine).unwrap();
     let tank_instances = query_resource!(world, RenderTankInstances).unwrap();
-    let tanks_query = world_query!(Transform2D, RenderTank);
+    let tanks_query = world_query!(Transform2d, RenderTank);
 
     tank_instances.data_mut().instances.clear();
     for (_, transform2d, render_tank) in tanks_query(world).iter() {
@@ -395,20 +413,18 @@ fn tanks_render_system(world: &mut World) {
 
 fn debug_shapes_prepare_system(world: &mut World) {
     let render_engine = query_resource!(world, RenderEngine).unwrap();
-    let colliders_query = world_query!(Transform2D, Colliders2d);
+    let colliders_query = world_query!(Colliders2d);
     let debug_boarder_instances = query_resource!(world, DebugBoarderInstances).unwrap();
 
     debug_boarder_instances.data_mut().instances.clear();
-    for (_, transform2d, colliders) in colliders_query(world).iter() {
-        for bb2d in &colliders.collider_list {
-            if let CollisionPrimitive2d::Obb2d(bb2d) = bb2d {
-                let scale = Vec3::new(bb2d.half_size.x, bb2d.half_size.y, 1.0);
-                let rotation = Quat::from_rotation_z(f32::to_radians(bb2d.rotation));
-                let translation = Vec3::new(transform2d.translation.x + bb2d.center.x, transform2d.translation.y + bb2d.center.y, 0.2);
-                let model = Mat4::from_scale_rotation_translation(scale, rotation, translation);
-                let debug_border_raw_instance = InstanceDebugShape::new(model, scale.xy(), 0.05);
-                debug_boarder_instances.data_mut().instances.push(debug_border_raw_instance);
-            }
+    for (_, colliders) in colliders_query(world).iter() {
+        for collider2d in &colliders.collider_list {
+            let scale = Vec3::new(collider2d.obb2d.half_size.x, collider2d.obb2d.half_size.y, 1.0);
+            let rotation = Quat::from_rotation_z(f32::to_radians(collider2d.obb2d.rotation));
+            let translation = Vec3::new(collider2d.obb2d.center.x, collider2d.obb2d.center.y, 0.2);
+            let model = Mat4::from_scale_rotation_translation(scale, rotation, translation);
+            let debug_border_raw_instance = InstanceDebugShape::new(model, scale.xy(), 0.05);
+            debug_boarder_instances.data_mut().instances.push(debug_border_raw_instance);
         }
     }
 
