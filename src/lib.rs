@@ -1,6 +1,8 @@
-use glam::{IVec2, Mat4, Quat, Vec2, Vec3, Vec3Swizzles};
+use std::vec;
+
+use glam::{IVec2, Mat4, Vec2, Vec3};
 use wgpu::{util::DeviceExt, BindGroupDescriptor, BindGroupEntry};
-use xenofrost::{core::{app::App, input_manager::{InputManager, KeyCode}, math::bounding2d::Obb2d, render_engine::{camera::{Camera, CameraProjection, OrthographicProjection}, mesh::{AtlasQuadMesh, QuadMesh}, pipeline::{AtlasPipeline2D, DebugBordersPipeline2D, InstanceAtlas, InstanceDebugShape}, texture::{Texture, TextureBindGroupLayout}, AspectRatio, DrawMesh, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Collider2d, Colliders2d, Transform2d, World}}, include_bytes_from_project_path};
+use xenofrost::{core::{app::App, input_manager::{InputManager, KeyCode}, math::bounding2d::Polygon2d, render_engine::{camera::{Camera, CameraProjection, OrthographicProjection}, mesh::{AtlasQuadMesh, Mesh}, pipeline::{AtlasPipeline2d, DebugLineInstance, DebugLinesPipeline2d, InstanceAtlas}, texture::{Texture, TextureBindGroupLayout}, AspectRatio, DrawMesh, PrimaryRenderPass, RenderEngine}, world::{component::Component, query_resource, resource::Resource, world_query, Collider2d, Colliders2d, Transform2d, World}}, include_bytes_from_project_path};
 
 const BASELINE_NUMBER_OF_RESOURCES: u64 = xenofrost::NUMBER_OF_RESOURCES;
 const BASELINE_NUMBER_OF_COMPONENTS: u64 = xenofrost::NUMBER_OF_COMPONENTS;
@@ -35,27 +37,16 @@ pub fn run() {
 }
 
 #[derive(Resource)]
-struct DebugBoarderInstances {
-    instances: Vec<InstanceDebugShape>,
-    prev_size: usize,
-    instances_buffer: wgpu::Buffer,
+struct DebugLineInstances {
+    instances: Vec<DebugLineInstance>,
 }
 
-impl DebugBoarderInstances {
-    fn new(device: &wgpu::Device) -> Self {
+impl DebugLineInstances {
+    fn new() -> Self {
         let instances = Vec::new();
-        let instances_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Debug Border Instances"),
-            size: 1,
-            usage: wgpu::BufferUsages::VERTEX,
-            mapped_at_creation: false
-        });
-        let prev_size = instances.len();
 
         Self {
             instances,
-            prev_size,
-            instances_buffer,
         }
     }
 }
@@ -66,6 +57,17 @@ pub struct RenderTankInstances {
     pub prev_size: usize,
     pub instances_buffer: wgpu::Buffer,
 }
+
+const TANK_COLLISION_POINTS: &[&[Vec2]] = &[
+    &[Vec2::new(-0.2890625, 0.21875), Vec2::new(-0.375, 0.1171875), Vec2::new(-0.4453125, -0.21875), Vec2::new(-0.328125, -0.328125), Vec2::new(0.3125, -0.328125), Vec2::new(0.4375, -0.234375), Vec2::new(0.375, 0.09375), Vec2::new(0.2578125, 0.21875)],
+    &[Vec2::new(-0.46875, 0.0), Vec2::new(-0.3125, -0.3203125), Vec2::new(-0.1953125, -0.390625), Vec2::new(0.3828125, -0.2578125), Vec2::new(0.484375, -0.140625), Vec2::new(0.484375, -0.0546875), Vec2::new(0.15625, 0.25), Vec2::new(-0.3671875, 0.1796875)],
+    &[Vec2::new(-0.4921875, -0.1328125), Vec2::new(-0.078125, -0.40625), Vec2::new(-0.015625, -0.40625), Vec2::new(0.390625, -0.1640625), Vec2::new(0.453125, -0.046875), Vec2::new(0.4609375, 0.0625), Vec2::new(0.390625, 0.1171875), Vec2::new(0.0078125, 0.2578125), Vec2::new(-0.40625, 0.109375), Vec2::new(-0.5, -0.03125)],
+    &[Vec2::new(-0.3984375, -0.2890625), Vec2::new(0.1796875, -0.390625), Vec2::new(0.296875, -0.0703125), Vec2::new(0.34375, 0.1875), Vec2::new(-0.1875, 0.2421875), Vec2::new(-0.3828125, 0.0078125), Vec2::new(-0.421875, -0.1875)],
+    &[Vec2::new(-0.3359375, -0.2265625), Vec2::new(-0.3046875, -0.34375), Vec2::new(0.296875, -0.34375), Vec2::new(0.3125, -0.2265625), Vec2::new(0.2578125, 0.21875), Vec2::new(-0.28125, 0.21875)],
+    &[Vec2::new(-0.3359375, 0.1953125), Vec2::new(-0.2109375, -0.375), Vec2::new(0.375, -0.3046875), Vec2::new(0.359375, 0.0), Vec2::new(0.1875, 0.234375)],
+    &[Vec2::new(-0.4765625, 0.0234375), Vec2::new(-0.421875, -0.125), Vec2::new(0.0078125, -0.40625), Vec2::new(0.1015625, -0.3828125),Vec2::new(0.484375, -0.125),Vec2::new(0.484375, -0.046875), Vec2::new(0.40625, 0.09375), Vec2::new(0.0, 0.2578125), Vec2::new(-0.4140625, 0.109375)],
+    &[Vec2::new(-0.390625, -0.265625), Vec2::new(0.1953125, -0.3828125), Vec2::new(0.3046875, -0.3046875), Vec2::new(0.4609375, 0.0078125), Vec2::new(0.3515625, 0.171875), Vec2::new(-0.1640625, 0.2421875), Vec2::new(-0.5, -0.0703125),Vec2::new(-0.4921875, -0.15625)],
+];
 
 impl RenderTankInstances {
     pub fn new(device: &wgpu::Device) -> Self {
@@ -143,20 +145,17 @@ fn startup_system(world: &mut World) {
     input_manager.data_mut().register_key_binding("right", KeyCode::KeyD);
     input_manager.data_mut().register_key_binding("space", KeyCode::Space);
 
-    let quad_mesh = QuadMesh::new(&render_engine.data().device);
-    world.add_resource(quad_mesh);
-
     let atlas_quad_mesh = AtlasQuadMesh::new(&render_engine.data().device);
     world.add_resource(atlas_quad_mesh);
     
-    let debug_borders_pipeline2d = DebugBordersPipeline2D::new(world);
-    world.add_resource(debug_borders_pipeline2d);
+    let debug_lines_pipeline2d = DebugLinesPipeline2d::new(world);
+    world.add_resource(debug_lines_pipeline2d);
 
-    let pipeline2d = AtlasPipeline2D::new(world);
+    let pipeline2d = AtlasPipeline2d::new(world);
     world.add_resource(pipeline2d);
     world.add_resource(RenderTankInstances::new(&render_engine.data().device));
 
-    world.add_resource(DebugBoarderInstances::new(&render_engine.data().device));
+    world.add_resource(DebugLineInstances::new());
 
     let tanks_texture_atlas_bind_group = TanksTextureAtlasBindGroup::new(world);
     world.add_resource(tanks_texture_atlas_bind_group);
@@ -192,7 +191,7 @@ fn startup_system(world: &mut World) {
     world.add_component_to_entity(player_tank, PlayerController);
     let mut colliders = Colliders2d::new();
     colliders.collider_list.push(Collider2d::new(
-        Obb2d::new(Vec2::new(0.0, -0.046875), Vec2::new(0.65625, 0.640625), 0.0), 
+        Polygon2d::new(TANK_COLLISION_POINTS[0].to_vec()), 
         Transform2d { 
             translation: Vec2::splat(0.0), 
             scale: Vec2::splat(1.0), 
@@ -270,11 +269,11 @@ fn player_tank_controller_system(world: &mut World) {
 
 fn update_tank_bounding_boxes(world: &mut World) {
     let tank_bounding_box_query = world_query!(Transform2d, RenderTank, mut Colliders2d);
-
     for (_, transform, _canon, mut obb_list) in tank_bounding_box_query(world).iter() {
-        obb_list.collider_list[0].obb2d.center = transform.translation + obb_list.collider_list[0].transform.translation;
-        obb_list.collider_list[0].obb2d.rotation = transform.rotation + obb_list.collider_list[0].transform.rotation;
-        
+        let atlas_index = get_tank_atlas_index(transform.rotation);
+        let collider_translation = obb_list.collider_list[0].transform.translation;
+        obb_list.collider_list[0].polygon2d = Polygon2d::new(TANK_COLLISION_POINTS[((atlas_index+4)%8) as usize].to_vec());
+        obb_list.collider_list[0].polygon2d.set_translation_rotation(transform.translation + collider_translation, 0.0);
     }
 }
 
@@ -313,31 +312,11 @@ fn camera_prepare_system(world: &mut World) {
 }
 
 fn get_tank_atlas_index(rotation: f32) -> u32 {
-    if (rotation > 348.75 || rotation <= 11.25) || (rotation > 168.75 && rotation <= 191.25) {
-        return 4;
-    }
-    else if (rotation > 11.25 && rotation <= 33.75) || (rotation > 191.25 && rotation <= 213.75) {
-        return 5;
-    }
-    else if (rotation > 33.75 && rotation <= 56.25) || (rotation > 213.75 && rotation <= 236.25) {
-        return 6;
-    }
-    else if (rotation > 56.25 && rotation <= 78.75) || (rotation > 236.25 && rotation <= 258.75) {
-        return 7;
-    }
-    else if (rotation > 78.75 && rotation <= 101.25) || (rotation > 258.75 && rotation <= 281.25) {
-        return 0;
-    }
-    else if (rotation > 101.25 && rotation <= 123.75) || (rotation > 281.25 && rotation <= 303.75) {
-        return 1;
-    }
-    else if (rotation > 123.75 && rotation <= 146.25) || (rotation > 303.75 && rotation <= 326.25) {
-        return 2;
-    }
-    else if (rotation > 146.25 && rotation <= 168.75) || (rotation > 326.25 && rotation <= 348.75) {
-        return 3;
-    }
-    0
+    let step = 360.0 / 16.0;
+    let half_step = step / 2.0;
+    let adjusted_rotation = ((rotation + half_step) + 360.0) % 360.0;
+    let index = (adjusted_rotation / step) as u32;
+    (index + 4) % 8
 }
 
 fn get_tank_cannon_atlas_index(rotation: f32) -> u32 {
@@ -393,7 +372,7 @@ fn tanks_prepare_system(world: &mut World) {
 }
 
 fn tanks_render_system(world: &mut World) {
-    let pipeline2d = query_resource!(world, AtlasPipeline2D).unwrap();
+    let pipeline2d = query_resource!(world, AtlasPipeline2d).unwrap();
     let tank_instances = query_resource!(world, RenderTankInstances).unwrap();
     let atlas_quad_mesh_handle = query_resource!(world, AtlasQuadMesh).unwrap();
     let atlas_quad_mesh = atlas_quad_mesh_handle.data();
@@ -414,46 +393,55 @@ fn tanks_render_system(world: &mut World) {
 fn debug_shapes_prepare_system(world: &mut World) {
     let render_engine = query_resource!(world, RenderEngine).unwrap();
     let colliders_query = world_query!(Colliders2d);
-    let debug_boarder_instances = query_resource!(world, DebugBoarderInstances).unwrap();
+    let debug_line_instances = query_resource!(world, DebugLineInstances).unwrap();
 
-    debug_boarder_instances.data_mut().instances.clear();
-    for (_, colliders) in colliders_query(world).iter() {
+    // The existing vertex and instance buffers will be cleaned up because wgpu::Buffer implements the Drop trait
+    debug_line_instances.data_mut().instances.clear();
+    for (entity, colliders) in colliders_query(world).iter() {
         for collider2d in &colliders.collider_list {
-            let scale = Vec3::new(collider2d.obb2d.half_size.x, collider2d.obb2d.half_size.y, 1.0);
-            let rotation = Quat::from_rotation_z(f32::to_radians(collider2d.obb2d.rotation));
-            let translation = Vec3::new(collider2d.obb2d.center.x, collider2d.obb2d.center.y, 0.2);
-            let model = Mat4::from_scale_rotation_translation(scale, rotation, translation);
-            let debug_border_raw_instance = InstanceDebugShape::new(model, scale.xy(), 0.05);
-            debug_boarder_instances.data_mut().instances.push(debug_border_raw_instance);
-        }
-    }
 
-    if debug_boarder_instances.data().instances.len() != debug_boarder_instances.data().prev_size {
-        debug_boarder_instances.data_mut().instances_buffer.destroy();
-        let new_instances_buffer = render_engine.data().device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Debug Border Instance Buffer"),
-            contents: bytemuck::cast_slice(&debug_boarder_instances.data().instances),
-            usage: wgpu::BufferUsages::VERTEX
-        });
-        debug_boarder_instances.data_mut().instances_buffer = new_instances_buffer;
-    }
-    else {
-        render_engine.data().queue.write_buffer(&debug_boarder_instances.data().instances_buffer, 0, bytemuck::cast_slice(&debug_boarder_instances.data().instances));
+            let vertices: Vec<Vec3> = collider2d.polygon2d.points.clone().into_iter().map(|vec2| Vec3::new(vec2.x, vec2.y, 10.0)).collect();
+            let vertex_buffer = render_engine.data().device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(format!("Vertex Buffer for {}", entity).as_str()),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+
+            let mut index_list: Vec<u16> = (0..collider2d.polygon2d.points.len() as u16).collect();
+            index_list.push(0);
+            let index_buffer = render_engine.data().device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(format!("Index Buffer for {}", entity).as_str()),
+                contents: bytemuck::cast_slice(&index_list),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
+            let num_indices = collider2d.polygon2d.points.len() + 1;
+            
+            let mesh = Mesh {
+                name: format!("Debug Line for {}", entity),
+                vertex_buffer: vertex_buffer,
+                index_buffer: index_buffer,
+                num_elements: num_indices as u32,
+            };
+            debug_line_instances.data_mut().instances.push(DebugLineInstance { 
+                mesh 
+            });
+        }
     }
 }
 
 fn debug_shapes_render_system(world: &mut World) {
-    let debug_border_instances = query_resource!(world, DebugBoarderInstances).unwrap();
-    let quad_mesh_handle = query_resource!(world, QuadMesh).unwrap();
-    let quad_mesh = quad_mesh_handle.data();
-    let debug_border_pipeline2d = query_resource!(world, DebugBordersPipeline2D).unwrap();
+    let debug_border_instances = query_resource!(world, DebugLineInstances).unwrap();
+    let debug_lines_pipeline2d = query_resource!(world, DebugLinesPipeline2d).unwrap();
     let primary_render_pass = query_resource!(world, PrimaryRenderPass).unwrap();
 
     let camera_query = world_query!(Camera);
     let camera_query_invoke = camera_query(world);
     let (_, camera) = camera_query_invoke.iter().next().unwrap();
 
-    primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_pipeline(&debug_border_pipeline2d.data().pipeline);
-    primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_vertex_buffer(1, debug_border_instances.data().instances_buffer.slice(..));
-    primary_render_pass.data_mut().render_pass.as_mut().unwrap().draw_mesh_instanced(&quad_mesh.mesh, 0..debug_border_instances.data().instances.len() as u32, &camera.camera_bind_group);
+    primary_render_pass.data_mut().render_pass.as_mut().unwrap().set_pipeline(&debug_lines_pipeline2d.data().pipeline);
+
+    for debug_line_instance in &debug_border_instances.data().instances {
+        primary_render_pass.data_mut().render_pass.as_mut().unwrap().draw_mesh(&debug_line_instance.mesh, &camera.camera_bind_group);
+    }
 }
