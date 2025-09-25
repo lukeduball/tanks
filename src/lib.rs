@@ -7,9 +7,6 @@ use xenofrost::{core::{app::App, input_manager::{InputManager, KeyCode}, math::b
 const BASELINE_NUMBER_OF_RESOURCES: u64 = xenofrost::NUMBER_OF_RESOURCES;
 const BASELINE_NUMBER_OF_COMPONENTS: u64 = xenofrost::NUMBER_OF_COMPONENTS;
 
-const HALF_WORLD_WIDTH: f32 = 5.0;
-const HALF_WORLD_HEIGHT: f32 = 5.0;
-
 #[cfg(target_arch="wasm32")]
 use wasm_bindgen::prelude::*;
 
@@ -24,9 +21,9 @@ pub fn run() {
 
     let mut app = App::new("tanks");
     app.add_startup_system(Box::new(startup_system));
-    app.add_update_system(Box::new(world_border_system));
     app.add_update_system(Box::new(player_tank_controller_system));
     app.add_update_system(Box::new(update_tank_bounding_boxes));
+    app.add_update_system(Box::new(world_border_system));
     app.add_render_system(Box::new(collision_detection_system));
     app.add_prepare_system(Box::new(camera_prepare_system));
     app.add_prepare_system(Box::new(tanks_prepare_system));
@@ -36,6 +33,9 @@ pub fn run() {
 
     app.run();
 }
+
+#[derive(Component)]
+struct WorldBoundary;
 
 #[derive(Resource)]
 struct DebugLineInstances {
@@ -231,6 +231,27 @@ fn startup_system(world: &mut World) {
         Transform2d { translation: Vec2::splat(0.0), scale: Vec2::splat(1.0), rotation: 0.0 }
     ));
     world.add_component_to_entity(third_tank, third_tank_collider);
+
+    let world_border = world.spawn_entity();
+    let mut world_border_colliders = Colliders2d::new();
+    world_border_colliders.collider_list.push(Collider2d::new( 
+        Polygon2d::new(vec![Vec2::new(-8.5, 4.5), Vec2::new(-8.5, -4.5), Vec2::new(-8.0, -4.5), Vec2::new(-8.0, 4.5)]), 
+        Transform2d { translation: Vec2::splat(0.0), scale: Vec2::splat(1.0), rotation: 0.0 }, 
+    ));
+    world_border_colliders.collider_list.push(Collider2d::new( 
+        Polygon2d::new(vec![Vec2::new(8.0, 4.5), Vec2::new(8.0, -4.5), Vec2::new(8.5, -4.5), Vec2::new(8.5, 4.5)]), 
+        Transform2d { translation: Vec2::splat(0.0), scale: Vec2::splat(1.0), rotation: 0.0 }, 
+    ));
+    world_border_colliders.collider_list.push(Collider2d::new( 
+        Polygon2d::new(vec![Vec2::new(-8.0, 5.0), Vec2::new(-8.0, 4.5), Vec2::new(8.0, 4.5), Vec2::new(8.0, 5.0)]), 
+        Transform2d { translation: Vec2::splat(0.0), scale: Vec2::splat(1.0), rotation: 0.0 }, 
+    ));
+    world_border_colliders.collider_list.push(Collider2d::new( 
+        Polygon2d::new(vec![Vec2::new(-8.0, -4.5), Vec2::new(-8.0, -5.0), Vec2::new(8.0, -5.0), Vec2::new(8.0, -4.5)]), 
+        Transform2d { translation: Vec2::splat(0.0), scale: Vec2::splat(1.0), rotation: 0.0 }, 
+    ));
+    world.add_component_to_entity(world_border, world_border_colliders);
+    world.add_component_to_entity(world_border, WorldBoundary);
 }
 
 fn player_tank_controller_system(world: &mut World) {
@@ -337,22 +358,19 @@ fn collision_detection_system(world: &mut World) {
 }
 
 fn world_border_system(world: &mut World) {
-    let tanks_query = world_query!(mut Transform2d, RenderTank);
-    for (_, transform2d, _) in tanks_query(&world).iter() {
-        if transform2d.data().translation.x <= -HALF_WORLD_WIDTH {
-            transform2d.data_mut().translation.x = -HALF_WORLD_WIDTH;
-        }
+    let world_boundary_query = world_query!(WorldBoundary, Colliders2d);
+    let object_query = world_query!(Transform2d, Colliders2d);
 
-        if transform2d.data().translation.x >= HALF_WORLD_WIDTH {
-            transform2d.data_mut().translation.x = HALF_WORLD_WIDTH;
-        }
-
-        if transform2d.data().translation.y <= -HALF_WORLD_HEIGHT {
-            transform2d.data_mut().translation.y = -HALF_WORLD_HEIGHT;
-        }
-
-        if transform2d.data().translation.y >= HALF_WORLD_HEIGHT {
-            transform2d.data_mut().translation.y = HALF_WORLD_HEIGHT;
+    for (_, transform2d, object_colliders) in object_query(world).iter() {
+        for object_collider in &object_colliders.data().collider_list {
+            for (_, _, world_boundary_colliders) in world_boundary_query(world).iter() {
+                for collider in &world_boundary_colliders.data().collider_list {
+                    let intersection_result = object_collider.polygon2d.get_intersection_result(&collider.polygon2d);
+                    if intersection_result.collision {
+                        transform2d.data_mut().translation += intersection_result.normal * intersection_result.penetration_val;
+                    }
+                }
+            }
         }
     }
 }
