@@ -22,7 +22,8 @@ pub fn run() {
     let mut app = App::new("tanks");
     app.add_startup_system(Box::new(startup_system));
     app.add_update_system(Box::new(player_tank_controller_system));
-    app.add_update_system(Box::new(update_tank_bounding_boxes));
+    app.add_update_system(Box::new(bullet_movement_system));
+    app.add_update_system(Box::new(update_bounding_boxes));
     app.add_update_system(Box::new(world_border_system));
     app.add_render_system(Box::new(collision_detection_system));
     app.add_prepare_system(Box::new(camera_prepare_system));
@@ -52,6 +53,12 @@ impl DebugLineInstances {
     }
 }
 
+#[derive(Component)]
+struct Bullet {
+    velocity: f32,
+    damage: f32
+}
+
 #[derive(Resource)]
 pub struct RenderTankInstances {
     pub instances: Vec<InstanceAtlas>,
@@ -69,6 +76,8 @@ const TANK_COLLISION_POINTS: &[&[Vec2]] = &[
     &[Vec2::new(-0.4765625, 0.0234375), Vec2::new(-0.421875, -0.125), Vec2::new(0.0078125, -0.40625), Vec2::new(0.1015625, -0.3828125),Vec2::new(0.484375, -0.125),Vec2::new(0.484375, -0.046875), Vec2::new(0.40625, 0.09375), Vec2::new(0.0, 0.2578125), Vec2::new(-0.4140625, 0.109375)],
     &[Vec2::new(-0.390625, -0.265625), Vec2::new(0.1953125, -0.3828125), Vec2::new(0.3046875, -0.3046875), Vec2::new(0.4609375, 0.0078125), Vec2::new(0.3515625, 0.171875), Vec2::new(-0.1640625, 0.2421875), Vec2::new(-0.5, -0.0703125),Vec2::new(-0.4921875, -0.15625)],
 ];
+
+const BULLET_COLLISION_POINTS: &[Vec2] = &[Vec2::new(-0.1, 0.1), Vec2::new(-0.1, -0.1), Vec2::new(0.1, -0.1), Vec2::new(0.1, 0.1)];
 
 impl RenderTankInstances {
     pub fn new(device: &wgpu::Device) -> Self {
@@ -193,7 +202,7 @@ fn startup_system(world: &mut World) {
     world.add_component_to_entity(player_tank, PlayerController);
     let mut colliders = Colliders2d::new();
     colliders.collider_list.push(Collider2d::new(
-        Polygon2d::new(TANK_COLLISION_POINTS[0].to_vec()), 
+        Polygon2d::new(TANK_COLLISION_POINTS[0].to_vec(), Vec2::splat(0.0), 0.0), 
         Transform2d { 
             translation: Vec2::splat(0.0), 
             scale: Vec2::splat(1.0), 
@@ -212,7 +221,7 @@ fn startup_system(world: &mut World) {
     });
     let mut other_tank_collider = Colliders2d::new();
     other_tank_collider.collider_list.push(Collider2d::new(
-        Polygon2d::new(TANK_COLLISION_POINTS[0].to_vec()),
+        Polygon2d::new(TANK_COLLISION_POINTS[0].to_vec(), Vec2::splat(0.0), 0.0),
         Transform2d { translation: Vec2::splat(0.0), scale: Vec2::splat(1.0), rotation: 0.0 }
     ));
     world.add_component_to_entity(other_tank, other_tank_collider);
@@ -227,7 +236,7 @@ fn startup_system(world: &mut World) {
     });
     let mut third_tank_collider = Colliders2d::new();
     third_tank_collider.collider_list.push(Collider2d::new(
-        Polygon2d::new(TANK_COLLISION_POINTS[0].to_vec()),
+        Polygon2d::new(TANK_COLLISION_POINTS[0].to_vec(), Vec2::splat(0.0), 0.0),
         Transform2d { translation: Vec2::splat(0.0), scale: Vec2::splat(1.0), rotation: 0.0 }
     ));
     world.add_component_to_entity(third_tank, third_tank_collider);
@@ -235,19 +244,19 @@ fn startup_system(world: &mut World) {
     let world_border = world.spawn_entity();
     let mut world_border_colliders = Colliders2d::new();
     world_border_colliders.collider_list.push(Collider2d::new( 
-        Polygon2d::new(vec![Vec2::new(-8.5, 4.5), Vec2::new(-8.5, -4.5), Vec2::new(-8.0, -4.5), Vec2::new(-8.0, 4.5)]), 
+        Polygon2d::new(vec![Vec2::new(-8.5, 4.5), Vec2::new(-8.5, -4.5), Vec2::new(-8.0, -4.5), Vec2::new(-8.0, 4.5)], Vec2::splat(0.0), 0.0), 
         Transform2d { translation: Vec2::splat(0.0), scale: Vec2::splat(1.0), rotation: 0.0 }, 
     ));
     world_border_colliders.collider_list.push(Collider2d::new( 
-        Polygon2d::new(vec![Vec2::new(8.0, 4.5), Vec2::new(8.0, -4.5), Vec2::new(8.5, -4.5), Vec2::new(8.5, 4.5)]), 
+        Polygon2d::new(vec![Vec2::new(8.0, 4.5), Vec2::new(8.0, -4.5), Vec2::new(8.5, -4.5), Vec2::new(8.5, 4.5)], Vec2::splat(0.0), 0.0), 
         Transform2d { translation: Vec2::splat(0.0), scale: Vec2::splat(1.0), rotation: 0.0 }, 
     ));
     world_border_colliders.collider_list.push(Collider2d::new( 
-        Polygon2d::new(vec![Vec2::new(-8.0, 5.0), Vec2::new(-8.0, 4.5), Vec2::new(8.0, 4.5), Vec2::new(8.0, 5.0)]), 
+        Polygon2d::new(vec![Vec2::new(-8.0, 5.0), Vec2::new(-8.0, 4.5), Vec2::new(8.0, 4.5), Vec2::new(8.0, 5.0)], Vec2::splat(0.0), 0.0), 
         Transform2d { translation: Vec2::splat(0.0), scale: Vec2::splat(1.0), rotation: 0.0 }, 
     ));
     world_border_colliders.collider_list.push(Collider2d::new( 
-        Polygon2d::new(vec![Vec2::new(-8.0, -4.5), Vec2::new(-8.0, -5.0), Vec2::new(8.0, -5.0), Vec2::new(8.0, -4.5)]), 
+        Polygon2d::new(vec![Vec2::new(-8.0, -4.5), Vec2::new(-8.0, -5.0), Vec2::new(8.0, -5.0), Vec2::new(8.0, -4.5)], Vec2::splat(0.0), 0.0), 
         Transform2d { translation: Vec2::splat(0.0), scale: Vec2::splat(1.0), rotation: 0.0 }, 
     ));
     world.add_component_to_entity(world_border, world_border_colliders);
@@ -318,15 +327,48 @@ fn player_tank_controller_system(world: &mut World) {
     let tank_mouse_difference = Vec2::new(mouse_coords.x, mouse_coords.y) - cannon_center;
     let rotation = (f32::atan2(tank_mouse_difference.y, tank_mouse_difference.x).to_degrees() + 360.0) % 360.0;
     cannon.data_mut().cannon_rotation = rotation;
+
+    if space_key_state.get_was_pressed() {
+        let bullet = world.spawn_entity();
+        world.add_component_to_entity(bullet, Bullet {
+            velocity: 0.01,
+            damage: 1.0,
+        });
+        world.add_component_to_entity(bullet, Transform2d {
+            translation: Vec2::new(transform2d.data().translation.x, transform2d.data().translation.y),
+            scale: Vec2::splat(1.0),
+            rotation: rotation
+        });
+        let mut bullet_colliders = Colliders2d::new();
+        bullet_colliders.collider_list.push(Collider2d { 
+            polygon2d: Polygon2d::new(BULLET_COLLISION_POINTS.to_vec(), Vec2::splat(0.0), 0.0), 
+            transform: Transform2d { translation: Vec2::new(0.0, 0.0), scale: Vec2::splat(1.0), rotation: 0.0 }, 
+            debug_color: Vec3::new(1.0, 0.0, 0.0) 
+        });
+        world.add_component_to_entity(bullet, bullet_colliders);
+    }
 }
 
-fn update_tank_bounding_boxes(world: &mut World) {
+fn bullet_movement_system(world: &mut World) {
+    let bullet_query = world_query!(Transform2d, Bullet);
+    for (_, transform, bullet) in bullet_query(world).iter() {
+        let movement_vector = Vec2::new(transform.data().rotation.to_radians().cos(), transform.data().rotation.to_radians().sin());
+        transform.data_mut().translation += movement_vector * bullet.data().velocity;
+    }
+}
+
+fn update_bounding_boxes(world: &mut World) {
     let tank_bounding_box_query = world_query!(Transform2d, RenderTank, mut Colliders2d);
     for (_, transform, _canon, obb_list) in tank_bounding_box_query(world).iter() {
         let atlas_index = get_tank_atlas_index(transform.data().rotation);
         let collider_translation = obb_list.data().collider_list[0].transform.translation;
-        obb_list.data_mut().collider_list[0].polygon2d = Polygon2d::new(TANK_COLLISION_POINTS[((atlas_index+4)%8) as usize].to_vec());
+        obb_list.data_mut().collider_list[0].polygon2d = Polygon2d::new(TANK_COLLISION_POINTS[((atlas_index+4)%8) as usize].to_vec(), Vec2::splat(0.0), 0.0);
         obb_list.data_mut().collider_list[0].polygon2d.set_translation_rotation(transform.data().translation + collider_translation, 0.0);
+    }
+
+    let bullet_bounding_box_query = world_query!(Transform2d, Bullet, mut Colliders2d);
+    for (_, transform, _bullet, obb_list) in bullet_bounding_box_query(world).iter() {
+        obb_list.data_mut().collider_list[0].polygon2d.set_translation_rotation(transform.data().translation, transform.data().rotation);
     }
 }
 
