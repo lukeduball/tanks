@@ -1571,14 +1571,10 @@ dependencies = [
 name = "tanks"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
  "cfg-if",
  "console_error_panic_hook",
  "console_log",
- "glam",
  "log",
- "wasm-bindgen",
- "wgpu",
  "xenofrost",
 ]
 
@@ -2404,16 +2400,6 @@ dependencies = [
  "web-sys",
  "wgpu",
  "winit",
- "xenofrost_macros",
-]
-
-[[package]]
-name = "xenofrost_macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.100",
 ]
 
 [[package]]
