@@ -10,6 +10,11 @@ use xenofrost::core::render_engine::wgpu::BufferUsages;
 use xenofrost::core::render_engine::{DrawMesh, bytemuck, wgpu};
 use xenofrost::core::render_engine::{RenderEngine, create_command_encoder};
 use xenofrost::core::math::{IVec2, Mat4, Transform2d, Vec2, Vec2Swizzles, Vec3, Vec3Swizzles};
+use xenofrost::core::world::camera::{Camera2d, CameraProjection, OrthographicProjection};
+use xenofrost::include_bytes_from_project_path;
+
+#[cfg(target_arch="wasm32")]
+use wasm_bindgen::prelude::*;
 
 const TANK_COLLISION_POINTS: &[&[Vec2]] = &[
     &[Vec2::new(-0.2890625, 0.21875), Vec2::new(-0.375, 0.1171875), Vec2::new(-0.4453125, -0.21875), Vec2::new(-0.328125, -0.328125), Vec2::new(0.3125, -0.328125), Vec2::new(0.4375, -0.234375), Vec2::new(0.375, 0.09375), Vec2::new(0.2578125, 0.21875)],
@@ -24,18 +29,7 @@ const TANK_COLLISION_POINTS: &[&[Vec2]] = &[
 
 const BULLET_COLLISION_POINTS: &[Vec2] = &[Vec2::new(-0.1, 0.1), Vec2::new(-0.1, -0.1), Vec2::new(0.1, -0.1), Vec2::new(0.1, 0.1)];
 
-struct RenderResources {
-    atlas_quad_mesh: Mesh,
-    atlas_pipeline: wgpu::RenderPipeline,
-    render_camera: RenderCamera,
-    color_bind_group_layout: wgpu::BindGroupLayout,
-    debug_lines_pipeline: wgpu::RenderPipeline,
-    tanks_texture_atlas_bind_group: wgpu::BindGroup,
-    render_tank_instances: VecBuffer<InstanceAtlas>,
-    debug_line_instances: Vec<InstanceDebugLine>
-}
-
-struct WorldResources {
+struct TanksWorldData {
     camera: Camera2d,
     player_tank: Tank,
     enemy_tanks: Vec<Tank>,
@@ -44,28 +38,15 @@ struct WorldResources {
     window_size: IVec2,
 }
 
-struct TanksWorldData {
-    world_resources: Option<WorldResources>
-}
-
-impl Default for TanksWorldData {
-    fn default() -> Self {
-        Self {
-            world_resources: None
-        }
-    }
-}
-
 struct TanksRenderData {
-    render_resources: Option<RenderResources>
-}
-
-impl Default for TanksRenderData {
-    fn default() -> Self {
-        Self {
-            render_resources: None
-        }
-    }
+    atlas_quad_mesh: Mesh,
+    atlas_pipeline: wgpu::RenderPipeline,
+    render_camera: RenderCamera,
+    color_bind_group_layout: wgpu::BindGroupLayout,
+    debug_lines_pipeline: wgpu::RenderPipeline,
+    tanks_texture_atlas_bind_group: wgpu::BindGroup,
+    render_tank_instances: VecBuffer<InstanceAtlas>,
+    debug_line_instances: Vec<InstanceDebugLine>
 }
 
 struct Tank {
@@ -81,11 +62,6 @@ struct Bullet {
     collider: Polygon2d
 }
 
-#[cfg(target_arch="wasm32")]
-use wasm_bindgen::prelude::*;
-use xenofrost::core::world::camera::{Camera2d, CameraProjection, OrthographicProjection};
-use xenofrost::include_bytes_from_project_path;
-
 #[cfg_attr(target_arch="wasm32", wasm_bindgen(start))]
 pub fn run() {
     cfg_if::cfg_if!(
@@ -95,11 +71,11 @@ pub fn run() {
         }
     );
 
-    let mut app = App::<TanksWorldData, TanksRenderData>::new("tanks", Default::default(), Default::default(), startup, resize_event, update, prepare, render);
+    let mut app = App::<TanksWorldData, TanksRenderData>::new("tanks", startup, resize_event, update, prepare, render);
     app.run();
 }
 
-fn startup(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksRenderData, input_manager: &mut InputManager, render_engine: &RenderEngine) {
+fn startup(input_manager: &mut InputManager, render_engine: &RenderEngine) -> (TanksWorldData, TanksRenderData) {
     input_manager.register_key_binding("up", KeyCode::KeyW);
     input_manager.register_key_binding("down", KeyCode::KeyS);
     input_manager.register_key_binding("left", KeyCode::KeyA);
@@ -119,7 +95,7 @@ fn startup(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksR
 
     let debug_lines_pipeline = create_debug_lines_pipeline2d(&render_engine.device, &render_engine.config, &camera_bind_group_layout, &color_bind_group_layout);
 
-    tanks_render_data.render_resources = Some(RenderResources { 
+    let tanks_render_data = TanksRenderData { 
         atlas_quad_mesh: create_atlas_quad_mesh(&render_engine.device), 
         atlas_pipeline: create_atlas_pipeline2d(&render_engine.device, &render_engine.config, &camera_bind_group_layout, &texture_bind_group_layout), 
         color_bind_group_layout,
@@ -134,11 +110,11 @@ fn startup(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksR
         render_camera: RenderCamera::new(&render_engine.device, &camera_bind_group_layout, "Primary Camera"),
         render_tank_instances: VecBuffer::new(&render_engine.device, "Render Tank Instances", wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST), 
         debug_line_instances: Vec::new()
-    });
+    };
 
     let green_color = Vec3::new(0.0, 1.0, 0.0);
 
-    tanks_world_data.world_resources = Some(WorldResources { 
+    let tanks_world_data = TanksWorldData { 
         camera: Camera2d::new(
             Vec3::new(0.0, 0.0, -1.0),
             CameraProjection::Orthographic(OrthographicProjection {
@@ -174,21 +150,21 @@ fn startup(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksR
             Polygon2d::new(vec![Vec2::new(-8.0, -4.5), Vec2::new(-8.0, -5.0), Vec2::new(8.0, -5.0), Vec2::new(8.0, -4.5)], Vec2::splat(0.0), 0.0, green_color)
         ],
         window_size: IVec2::new(render_engine.window_width as i32, render_engine.window_height as i32) 
-    });
+    };
+
+    (tanks_world_data, tanks_render_data)
 }
 
 fn update(tanks_world_data: &mut TanksWorldData, input_manager: &InputManager) {
-    let world_resources = tanks_world_data.world_resources.as_mut().unwrap();
-
-    update_player_tank_controller(world_resources, input_manager);
-    update_bullet_movement(world_resources);
-    update_collision_shapes(world_resources);
-    update_world_border_collisions(world_resources);
-    update_collision_debug_color_intersection(world_resources);
+    update_player_tank_controller(tanks_world_data, input_manager);
+    update_bullet_movement(tanks_world_data);
+    update_collision_shapes(tanks_world_data);
+    update_world_border_collisions(tanks_world_data);
+    update_collision_debug_color_intersection(tanks_world_data);
 }
 
-fn update_player_tank_controller(world_resources: &mut WorldResources, input_manager: &InputManager) {
-    let tank_transform2d = &mut world_resources.player_tank.transform2d;
+fn update_player_tank_controller(tanks_world_data: &mut TanksWorldData, input_manager: &InputManager) {
+    let tank_transform2d = &mut tanks_world_data.player_tank.transform2d;
 
     let rotation_speed = 0.5;
     let movement_speed = 0.005;
@@ -235,48 +211,48 @@ fn update_player_tank_controller(world_resources: &mut WorldResources, input_man
     }
 
     let pixel_mouse_coords = input_manager.get_mouse_physical();
-    let mouse_coords = world_resources.camera.convert_screen_space_to_world_space(pixel_mouse_coords, world_resources.window_size);
-    let cannon_center = world_resources.player_tank.transform2d.get_translation() + Vec2::new(0.0, 0.01875);
+    let mouse_coords = tanks_world_data.camera.convert_screen_space_to_world_space(pixel_mouse_coords, tanks_world_data.window_size);
+    let cannon_center = tanks_world_data.player_tank.transform2d.get_translation() + Vec2::new(0.0, 0.01875);
     let tank_mouse_difference = mouse_coords.xy() - cannon_center;
-    world_resources.player_tank.cannon_rotation = (f32::atan2(tank_mouse_difference.y, tank_mouse_difference.x).to_degrees() + 360.0) % 360.0;
+    tanks_world_data.player_tank.cannon_rotation = (f32::atan2(tank_mouse_difference.y, tank_mouse_difference.x).to_degrees() + 360.0) % 360.0;
 
     if shoot_key_state.get_was_pressed() {
         let bullet = Bullet {
-            transform2d: Transform2d::new(world_resources.player_tank.transform2d.get_translation(), world_resources.player_tank.cannon_rotation, Vec2::splat(1.0)),
+            transform2d: Transform2d::new(tanks_world_data.player_tank.transform2d.get_translation(), tanks_world_data.player_tank.cannon_rotation, Vec2::splat(1.0)),
             velocity: 0.01,
             damage: 1.0,
-            collider: Polygon2d::new(BULLET_COLLISION_POINTS.to_vec(), world_resources.player_tank.transform2d.get_translation(), world_resources.player_tank.cannon_rotation, Vec3::new(0.0, 1.0, 0.0))
+            collider: Polygon2d::new(BULLET_COLLISION_POINTS.to_vec(), tanks_world_data.player_tank.transform2d.get_translation(), tanks_world_data.player_tank.cannon_rotation, Vec3::new(0.0, 1.0, 0.0))
         };
-        world_resources.bullets.push(bullet);
+        tanks_world_data.bullets.push(bullet);
     }
 }
 
-fn update_bullet_movement(world_resources: &mut WorldResources) {
-    for bullet in &mut world_resources.bullets {
+fn update_bullet_movement(tanks_world_data: &mut TanksWorldData) {
+    for bullet in &mut tanks_world_data.bullets {
         let movement_vector = Vec2::new(bullet.transform2d.get_rotation().to_radians().cos(), bullet.transform2d.get_rotation().to_radians().sin());
         bullet.transform2d.translate(movement_vector * bullet.velocity);
     }
 }
 
-fn update_collision_shapes(world_resources: &mut WorldResources) {
-    let mut tanks = vec![&mut world_resources.player_tank];
-    tanks.extend(world_resources.enemy_tanks.iter_mut());
+fn update_collision_shapes(tanks_world_data: &mut TanksWorldData) {
+    let mut tanks = vec![&mut tanks_world_data.player_tank];
+    tanks.extend(tanks_world_data.enemy_tanks.iter_mut());
     for tank in tanks {
         let atlas_index = get_tank_atlas_index(tank.transform2d.get_rotation());
         let debug_color = tank.collider.debug_color;
         tank.collider = Polygon2d::new(TANK_COLLISION_POINTS[((atlas_index+4)%8) as usize].to_vec(), tank.transform2d.get_translation(), 0.0, debug_color);
     }
 
-    for bullet in &mut world_resources.bullets {
+    for bullet in &mut tanks_world_data.bullets {
         bullet.collider.set_translation_rotation(bullet.transform2d.get_translation(), bullet.transform2d.get_rotation());
     }
 }
 
-fn update_world_border_collisions(world_resources: &mut WorldResources) {
-    let mut tanks = vec![&mut world_resources.player_tank];
-    tanks.extend(world_resources.enemy_tanks.iter_mut());
+fn update_world_border_collisions(tanks_world_data: &mut TanksWorldData) {
+    let mut tanks = vec![&mut tanks_world_data.player_tank];
+    tanks.extend(tanks_world_data.enemy_tanks.iter_mut());
     for tank in tanks {
-        for world_border in &world_resources.world_borders {
+        for world_border in &tanks_world_data.world_borders {
             let intersection_result = tank.collider.get_intersection_result(&world_border);
             if intersection_result.collision {
                 tank.transform2d.translate(intersection_result.normal * intersection_result.penetration_val);
@@ -284,8 +260,8 @@ fn update_world_border_collisions(world_resources: &mut WorldResources) {
         }
     }
 
-    for bullet in &mut world_resources.bullets {
-        for world_border in &world_resources.world_borders {
+    for bullet in &mut tanks_world_data.bullets {
+        for world_border in &tanks_world_data.world_borders {
             let intersection_result = bullet.collider.get_intersection_result(&world_border);
             if intersection_result.collision {
                 bullet.transform2d.translate(intersection_result.normal * intersection_result.penetration_val);
@@ -295,15 +271,15 @@ fn update_world_border_collisions(world_resources: &mut WorldResources) {
     
 }
 
-fn update_collision_debug_color_intersection(world_resources: &mut WorldResources) {
-    let mut colliders = vec![&mut world_resources.player_tank.collider];
-    for tank in &mut world_resources.enemy_tanks {
+fn update_collision_debug_color_intersection(tanks_world_data: &mut TanksWorldData) {
+    let mut colliders = vec![&mut tanks_world_data.player_tank.collider];
+    for tank in &mut tanks_world_data.enemy_tanks {
         colliders.push(&mut tank.collider);
     }
-    for bullet in &mut world_resources.bullets {
+    for bullet in &mut tanks_world_data.bullets {
         colliders.push(&mut bullet.collider);
     }
-    colliders.extend(world_resources.world_borders.iter_mut());
+    colliders.extend(tanks_world_data.world_borders.iter_mut());
 
     for collider_index in 0..colliders.len() {
         colliders[collider_index].debug_color = Vec3::new(0.0, 1.0, 0.0);
@@ -321,32 +297,27 @@ fn update_collision_debug_color_intersection(world_resources: &mut WorldResource
     }
 }
 
-fn resize_event(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksRenderData, render_engine: &RenderEngine) {
-    let world_resources = tanks_world_data.world_resources.as_mut().unwrap();
-
-    world_resources.window_size = IVec2::new(render_engine.window_width as i32, render_engine.window_height as i32);
-    world_resources.camera.update_aspect_ratio(render_engine.aspect_ratio);
+fn resize_event(tanks_world_data: &mut TanksWorldData, _tanks_render_data: &mut TanksRenderData, render_engine: &RenderEngine) {
+    tanks_world_data.window_size = IVec2::new(render_engine.window_width as i32, render_engine.window_height as i32);
+    tanks_world_data.camera.update_aspect_ratio(render_engine.aspect_ratio);
 }
 
 fn prepare(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksRenderData, render_engine: &RenderEngine) {
-    let world_resources = tanks_world_data.world_resources.as_mut().unwrap();
-    let render_resources = tanks_render_data.render_resources.as_mut().unwrap();
-
-    let camera_matrix = &world_resources.camera.view_projection_matrix;
-    let render_camera = &mut render_resources.render_camera;
+    let camera_matrix = &tanks_world_data.camera.view_projection_matrix;
+    let render_camera = &mut tanks_render_data.render_camera;
     render_camera.update_uniform_buffer(
         camera_matrix.clone(), 
         &render_engine.queue
     );
     
-    prepare_tanks(world_resources, render_resources, render_engine);
-    prepare_debug_lines(world_resources, render_resources, render_engine);
+    prepare_tanks(tanks_world_data, tanks_render_data, render_engine);
+    prepare_debug_lines(tanks_world_data, tanks_render_data, render_engine);
 }
 
-fn prepare_tanks(world_resources: &mut WorldResources, render_resources: &mut RenderResources, render_engine: &RenderEngine) {
-    render_resources.render_tank_instances.clear();
-    let mut tanks = vec![&world_resources.player_tank];
-    tanks.extend(world_resources.enemy_tanks.iter());
+fn prepare_tanks(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksRenderData, render_engine: &RenderEngine) {
+    tanks_render_data.render_tank_instances.clear();
+    let mut tanks = vec![&tanks_world_data.player_tank];
+    tanks.extend(tanks_world_data.enemy_tanks.iter());
     for tank in tanks {
         let base_atlas_index = get_tank_atlas_index(tank.transform2d.get_rotation());
         let base_atlas_tex_coords_x = base_atlas_index % 16;
@@ -356,7 +327,7 @@ fn prepare_tanks(world_resources: &mut WorldResources, render_resources: &mut Re
             tex_coords: Vec2::new(0.0625*base_atlas_tex_coords_x as f32, 0.0625*base_atlas_tex_coords_y as f32),
             sprite_size: Vec2::new(0.0625, 0.0625)
         };
-        render_resources.render_tank_instances.push(tank_base_instance);
+        tanks_render_data.render_tank_instances.push(tank_base_instance);
 
         let cannon_atlas_index = get_tank_cannon_atlas_index(tank.cannon_rotation);
         let cannon_atlas_tex_coords_x = cannon_atlas_index % 16;
@@ -366,21 +337,21 @@ fn prepare_tanks(world_resources: &mut WorldResources, render_resources: &mut Re
             tex_coords: Vec2::new(0.0625*cannon_atlas_tex_coords_x as f32, 0.0625*cannon_atlas_tex_coords_y as f32),
             sprite_size: Vec2::new(0.0625, 0.0625)
         };
-        render_resources.render_tank_instances.push(tank_cannon_instance);
-        render_resources.render_tank_instances.update_buffer_data(&render_engine.device, &render_engine.queue);
+        tanks_render_data.render_tank_instances.push(tank_cannon_instance);
+        tanks_render_data.render_tank_instances.update_buffer_data(&render_engine.device, &render_engine.queue);
     }
 }
 
-fn prepare_debug_lines(world_resources: &mut WorldResources, render_resources: &mut RenderResources, render_engine: &RenderEngine) {
-    render_resources.debug_line_instances.clear();
-    let mut polygon2ds = vec![&world_resources.player_tank.collider];
-    for tank in &world_resources.enemy_tanks {
+fn prepare_debug_lines(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksRenderData, render_engine: &RenderEngine) {
+    tanks_render_data.debug_line_instances.clear();
+    let mut polygon2ds = vec![&tanks_world_data.player_tank.collider];
+    for tank in &tanks_world_data.enemy_tanks {
         polygon2ds.push(&tank.collider);
     }
-    for bullet in &world_resources.bullets {
+    for bullet in &tanks_world_data.bullets {
         polygon2ds.push(&bullet.collider);
     }
-    polygon2ds.extend(world_resources.world_borders.iter());
+    polygon2ds.extend(tanks_world_data.world_borders.iter());
     for polygon2d in polygon2ds {
         let vertices: Vec<Vec3> = polygon2d.points.clone().into_iter().map(|vec2| vec2.xy().extend(10.0)).collect();
         let vertex_buffer = Buffer::create_buffer_during_init(
@@ -419,7 +390,7 @@ fn prepare_debug_lines(world_resources: &mut WorldResources, render_resources: &
         //TODO create my own bind group struct so no wgpu interfacing needs to occur
         let color_bind_group = render_engine.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Debug Line Bind Group"),
-            layout: &render_resources.color_bind_group_layout,
+            layout: &tanks_render_data.color_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -428,37 +399,35 @@ fn prepare_debug_lines(world_resources: &mut WorldResources, render_resources: &
             ],
         });
 
-        render_resources.debug_line_instances.push(InstanceDebugLine { mesh, color_uniform, color_bind_group });
+        tanks_render_data.debug_line_instances.push(InstanceDebugLine { mesh, color_uniform, color_bind_group });
     }
 }
 
 fn render(tanks_render_data: &TanksRenderData, render_engine: &RenderEngine) -> Result<(), wgpu::SurfaceError> {
-    let render_resources = tanks_render_data.render_resources.as_ref().unwrap();
-
     let mut encoder = create_command_encoder(&render_engine.device, "Command Encoder");
     let (mut primary_render_pass, output) = render_engine.render_frame_setup(&mut encoder)?;
 
-    render_tanks(render_resources, &mut primary_render_pass);
-    render_debug_lines(render_resources, &mut primary_render_pass);
+    render_tanks(tanks_render_data, &mut primary_render_pass);
+    render_debug_lines(tanks_render_data, &mut primary_render_pass);
 
     drop(primary_render_pass);
     render_engine.render_frame_present(output, encoder);
     Ok(())
 }
 
-fn render_tanks<'a: 'b, 'b>(render_resources: &'a RenderResources, primary_render_pass: &'b mut wgpu::RenderPass<'a>) {
-    primary_render_pass.set_pipeline(&render_resources.atlas_pipeline);
-    primary_render_pass.set_vertex_buffer(1, render_resources.render_tank_instances.get_buffer().slice(..));
-    primary_render_pass.set_bind_group(1, &render_resources.tanks_texture_atlas_bind_group, &[]);
-    primary_render_pass.draw_mesh_instanced(&render_resources.atlas_quad_mesh, 0..render_resources.render_tank_instances.len() as u32, &render_resources.render_camera.camera_bind_group);
+fn render_tanks<'a: 'b, 'b>(tanks_render_data: &'a TanksRenderData, primary_render_pass: &'b mut wgpu::RenderPass<'a>) {
+    primary_render_pass.set_pipeline(&tanks_render_data.atlas_pipeline);
+    primary_render_pass.set_vertex_buffer(1, tanks_render_data.render_tank_instances.get_buffer().slice(..));
+    primary_render_pass.set_bind_group(1, &tanks_render_data.tanks_texture_atlas_bind_group, &[]);
+    primary_render_pass.draw_mesh_instanced(&tanks_render_data.atlas_quad_mesh, 0..tanks_render_data.render_tank_instances.len() as u32, &tanks_render_data.render_camera.camera_bind_group);
 }
 
-fn render_debug_lines<'a: 'b, 'b>(render_resources: &'a RenderResources, primary_render_pass: &'b mut wgpu::RenderPass<'a>) {
-    primary_render_pass.set_pipeline(&render_resources.debug_lines_pipeline);
+fn render_debug_lines<'a: 'b, 'b>(tanks_render_data: &'a TanksRenderData, primary_render_pass: &'b mut wgpu::RenderPass<'a>) {
+    primary_render_pass.set_pipeline(&tanks_render_data.debug_lines_pipeline);
 
-    for debug_lines in &render_resources.debug_line_instances {
+    for debug_lines in &tanks_render_data.debug_line_instances {
         primary_render_pass.set_bind_group(1, &debug_lines.color_bind_group, &[]);
-        primary_render_pass.draw_mesh(&debug_lines.mesh, &render_resources.render_camera.camera_bind_group);
+        primary_render_pass.draw_mesh(&debug_lines.mesh, &tanks_render_data.render_camera.camera_bind_group);
     }
 }
 
