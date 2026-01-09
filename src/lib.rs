@@ -10,6 +10,7 @@ use xenofrost::core::render_engine::wgpu::BufferUsages;
 use xenofrost::core::render_engine::{DrawMesh, bytemuck, wgpu};
 use xenofrost::core::render_engine::{RenderEngine, create_command_encoder};
 use xenofrost::core::math::{IVec2, Mat4, Transform2d, Vec2, Vec2Swizzles, Vec3, Vec3Swizzles};
+use xenofrost::core::utilities::WorldVec;
 use xenofrost::core::world::camera::{Camera2d, CameraProjection, OrthographicProjection};
 use xenofrost::include_bytes_from_project_path;
 
@@ -32,8 +33,8 @@ const BULLET_COLLISION_POINTS: &[Vec2] = &[Vec2::new(-0.1, 0.1), Vec2::new(-0.1,
 struct TanksWorldData {
     camera: Camera2d,
     player_tank: Tank,
-    enemy_tanks: Vec<Tank>,
-    bullets: Vec<Bullet>,
+    enemy_tanks: WorldVec<Tank>,
+    bullets: WorldVec<Bullet>,
     world_borders: Vec<Polygon2d>,
     window_size: IVec2,
 }
@@ -58,8 +59,9 @@ struct Tank {
 struct Bullet {
     transform2d: Transform2d,
     velocity: f32,
-    damage: f32,
-    collider: Polygon2d
+    collider: Polygon2d,
+    bounces: u32,
+    max_bounces: u32
 }
 
 #[cfg_attr(target_arch="wasm32", wasm_bindgen(start))]
@@ -114,6 +116,20 @@ fn startup(input_manager: &mut InputManager, render_engine: &RenderEngine) -> (T
 
     let green_color = Vec3::new(0.0, 1.0, 0.0);
 
+    let mut enemy_tanks = WorldVec::<Tank>::new();
+    enemy_tanks.push(Tank {
+            transform2d: Transform2d::new(Vec2::new(2.0, -2.0), 35.0, Vec2::splat(1.0)), 
+            cannon_rotation: 45.0,
+            collider: Polygon2d::new(TANK_COLLISION_POINTS[0].to_vec(), Vec2::splat(0.0), 0.0, green_color),
+        }
+    );
+    enemy_tanks.push(Tank {
+            transform2d: Transform2d::new(Vec2::new(-2.0, 2.0), 72.0, Vec2::splat(1.0)), 
+            cannon_rotation: 232.0,
+            collider: Polygon2d::new(TANK_COLLISION_POINTS[0].to_vec(), Vec2::splat(0.0), 0.0, green_color),
+        }
+    );
+
     let tanks_world_data = TanksWorldData { 
         camera: Camera2d::new(
             Vec3::new(0.0, 0.0, -1.0),
@@ -130,19 +146,8 @@ fn startup(input_manager: &mut InputManager, render_engine: &RenderEngine) -> (T
             cannon_rotation: 0.0,
             collider: Polygon2d::new(TANK_COLLISION_POINTS[0].to_vec(), Vec2::splat(0.0), 0.0, green_color),
         }, 
-        enemy_tanks: vec![
-            Tank {
-                transform2d: Transform2d::new(Vec2::new(2.0, -2.0), 35.0, Vec2::splat(1.0)), 
-                cannon_rotation: 45.0,
-                collider: Polygon2d::new(TANK_COLLISION_POINTS[0].to_vec(), Vec2::splat(0.0), 0.0, green_color),
-            },
-            Tank {
-                transform2d: Transform2d::new(Vec2::new(-2.0, 2.0), 72.0, Vec2::splat(1.0)), 
-                cannon_rotation: 232.0,
-                collider: Polygon2d::new(TANK_COLLISION_POINTS[0].to_vec(), Vec2::splat(0.0), 0.0, green_color),
-            }, 
-        ], 
-        bullets: Vec::new(),
+        enemy_tanks, 
+        bullets: WorldVec::<Bullet>::new(),
         world_borders: vec![
             Polygon2d::new(vec![Vec2::new(-8.5, 4.5), Vec2::new(-8.5, -4.5), Vec2::new(-8.0, -4.5), Vec2::new(-8.0, 4.5)], Vec2::splat(0.0), 0.0, green_color),
             Polygon2d::new(vec![Vec2::new(8.0, 4.5), Vec2::new(8.0, -4.5), Vec2::new(8.5, -4.5), Vec2::new(8.5, 4.5)], Vec2::splat(0.0), 0.0, green_color),
@@ -220,8 +225,9 @@ fn update_player_tank_controller(tanks_world_data: &mut TanksWorldData, input_ma
         let bullet = Bullet {
             transform2d: Transform2d::new(tanks_world_data.player_tank.transform2d.get_translation(), tanks_world_data.player_tank.cannon_rotation, Vec2::splat(1.0)),
             velocity: 0.01,
-            damage: 1.0,
-            collider: Polygon2d::new(BULLET_COLLISION_POINTS.to_vec(), tanks_world_data.player_tank.transform2d.get_translation(), tanks_world_data.player_tank.cannon_rotation, Vec3::new(0.0, 1.0, 0.0))
+            collider: Polygon2d::new(BULLET_COLLISION_POINTS.to_vec(), tanks_world_data.player_tank.transform2d.get_translation(), tanks_world_data.player_tank.cannon_rotation, Vec3::new(0.0, 1.0, 0.0)),
+            bounces: 0,
+            max_bounces: 4,
         };
         tanks_world_data.bullets.push(bullet);
     }
@@ -230,13 +236,16 @@ fn update_player_tank_controller(tanks_world_data: &mut TanksWorldData, input_ma
 fn update_bullet_movement(tanks_world_data: &mut TanksWorldData) {
     for bullet in &mut tanks_world_data.bullets {
         let movement_vector = Vec2::new(bullet.transform2d.get_rotation().to_radians().cos(), bullet.transform2d.get_rotation().to_radians().sin());
-        bullet.transform2d.translate(movement_vector * bullet.velocity);
+        let bullet_velocity = bullet.velocity;
+        bullet.transform2d.translate(movement_vector * bullet_velocity);
     }
 }
 
 fn update_collision_shapes(tanks_world_data: &mut TanksWorldData) {
     let mut tanks = vec![&mut tanks_world_data.player_tank];
-    tanks.extend(tanks_world_data.enemy_tanks.iter_mut());
+    for enemy_tank in &mut tanks_world_data.enemy_tanks {
+        tanks.push(enemy_tank);
+    }
     for tank in tanks {
         let atlas_index = get_tank_atlas_index(tank.transform2d.get_rotation());
         let debug_color = tank.collider.debug_color;
@@ -244,13 +253,17 @@ fn update_collision_shapes(tanks_world_data: &mut TanksWorldData) {
     }
 
     for bullet in &mut tanks_world_data.bullets {
-        bullet.collider.set_translation_rotation(bullet.transform2d.get_translation(), bullet.transform2d.get_rotation());
+        let bullet_translation = bullet.transform2d.get_translation();
+        let bullet_rotation = bullet.transform2d.get_rotation();
+        bullet.collider.set_translation_rotation(bullet_translation, bullet_rotation);
     }
 }
 
 fn update_world_border_collisions(tanks_world_data: &mut TanksWorldData) {
     let mut tanks = vec![&mut tanks_world_data.player_tank];
-    tanks.extend(tanks_world_data.enemy_tanks.iter_mut());
+    for enemy_tank in &mut tanks_world_data.enemy_tanks {
+        tanks.push(enemy_tank);
+    }
     for tank in tanks {
         for world_border in &tanks_world_data.world_borders {
             let intersection_result = tank.collider.get_intersection_result(&world_border);
@@ -260,13 +273,26 @@ fn update_world_border_collisions(tanks_world_data: &mut TanksWorldData) {
         }
     }
 
-    for bullet in &mut tanks_world_data.bullets {
+    let mut remove_list = Vec::new();
+    for (index, bullet) in tanks_world_data.bullets.iter_mut().enumerate() {
         for world_border in &tanks_world_data.world_borders {
             let intersection_result = bullet.collider.get_intersection_result(&world_border);
             if intersection_result.collision {
-                bullet.transform2d.translate(intersection_result.normal * intersection_result.penetration_val);
+                if bullet.bounces == bullet.max_bounces {
+                    remove_list.push(index);
+                }
+                else {
+                    let direction_vector = Vec2::new(bullet.transform2d.get_rotation().to_radians().cos(), bullet.transform2d.get_rotation().to_radians().sin());
+                    let bounced_direction_vector = direction_vector - 2.0 * direction_vector.dot(intersection_result.normal) * intersection_result.normal;
+                    bullet.transform2d.set_rotation(f32::atan2(bounced_direction_vector.y, bounced_direction_vector.x).to_degrees());
+                    bullet.bounces += 1;
+                }
             }
         }
+    }
+
+    for index in remove_list {
+        tanks_world_data.bullets.swap_remove(index);
     }
     
 }
@@ -317,7 +343,9 @@ fn prepare(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksR
 fn prepare_tanks(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksRenderData, render_engine: &RenderEngine) {
     tanks_render_data.render_tank_instances.clear();
     let mut tanks = vec![&tanks_world_data.player_tank];
-    tanks.extend(tanks_world_data.enemy_tanks.iter());
+    for enemy_tank in &tanks_world_data.enemy_tanks {
+        tanks.push(enemy_tank);
+    }
     for tank in tanks {
         let base_atlas_index = get_tank_atlas_index(tank.transform2d.get_rotation());
         let base_atlas_tex_coords_x = base_atlas_index % 16;
