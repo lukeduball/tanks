@@ -164,8 +164,8 @@ fn update(tanks_world_data: &mut TanksWorldData, input_manager: &InputManager) {
     update_player_tank_controller(tanks_world_data, input_manager);
     update_bullet_movement(tanks_world_data);
     update_collision_shapes(tanks_world_data);
+    update_collision_tank_bullet(tanks_world_data);
     update_world_border_collisions(tanks_world_data);
-    update_collision_debug_color_intersection(tanks_world_data);
 }
 
 fn update_player_tank_controller(tanks_world_data: &mut TanksWorldData, input_manager: &InputManager) {
@@ -297,29 +297,27 @@ fn update_world_border_collisions(tanks_world_data: &mut TanksWorldData) {
     
 }
 
-fn update_collision_debug_color_intersection(tanks_world_data: &mut TanksWorldData) {
-    let mut colliders = vec![&mut tanks_world_data.player_tank.collider];
-    for tank in &mut tanks_world_data.enemy_tanks {
-        colliders.push(&mut tank.collider);
-    }
-    for bullet in &mut tanks_world_data.bullets {
-        colliders.push(&mut bullet.collider);
-    }
-    colliders.extend(tanks_world_data.world_borders.iter_mut());
-
-    for collider_index in 0..colliders.len() {
-        colliders[collider_index].debug_color = Vec3::new(0.0, 1.0, 0.0);
-
-        for other_collider_index in 0..colliders.len() {
-            if collider_index == other_collider_index {
-                continue;
-            }
-            
-            let intersection_result = colliders[collider_index].get_intersection_result(colliders[other_collider_index]);
+fn update_collision_tank_bullet(tanks_world_data: &mut TanksWorldData) {
+    let mut tank_remove_list = Vec::new();
+    let mut bullet_remove_list = Vec::new();
+    for tank in &tanks_world_data.enemy_tanks {
+        for bullet in &tanks_world_data.bullets {
+            let intersection_result = tank.collider.get_intersection_result(&bullet.collider);
             if intersection_result.collision {
-                colliders[collider_index].debug_color = Vec3::new(1.0, 0.0, 0.0);
+                tank_remove_list.push(tank.get_index_handle());
+                bullet_remove_list.push(bullet.get_index_handle());
             }
         }
+    }
+
+    for tank_index_handle in tank_remove_list {
+        let index = tank_index_handle.borrow().clone();
+        tanks_world_data.enemy_tanks.swap_remove(index);
+    }
+
+    for bullet_index_handle in bullet_remove_list {
+        let index = bullet_index_handle.borrow().clone();
+        tanks_world_data.bullets.swap_remove(index);
     }
 }
 
