@@ -312,15 +312,17 @@ fn update_collision_tank_bullet(tanks_world_data: &mut TanksWorldData) {
     let mut tank_remove_list = Vec::new();
     let mut bullet_remove_list = Vec::new();
 
-    for bullet_1_index in 0..tanks_world_data.bullets.len() {
-        for bullet_2_index in 0..tanks_world_data.bullets.len() {
-            if bullet_1_index != bullet_2_index {
-                let bullet_1 = &tanks_world_data.bullets[bullet_1_index];
-                let bullet_2 = &tanks_world_data.bullets[bullet_2_index];
-                let intersection_result = bullet_1.collider.get_intersection_result(&bullet_2.collider);
-                if intersection_result.collision {
-                    bullet_remove_list.push(bullet_1.get_index_handle());
-                    bullet_remove_list.push(bullet_2.get_index_handle());
+    if !tanks_world_data.bullets.is_empty() {
+        for bullet_1_index in 0..tanks_world_data.bullets.len() - 1 {
+            for bullet_2_index in bullet_1_index + 1..tanks_world_data.bullets.len() {
+                if bullet_1_index != bullet_2_index {
+                    let bullet_1 = &tanks_world_data.bullets[bullet_1_index];
+                    let bullet_2 = &tanks_world_data.bullets[bullet_2_index];
+                    let intersection_result = bullet_1.collider.get_intersection_result(&bullet_2.collider);
+                    if intersection_result.collision {
+                        bullet_remove_list.push(bullet_1.get_index_handle());
+                        bullet_remove_list.push(bullet_2.get_index_handle());
+                    }
                 }
             }
         }
