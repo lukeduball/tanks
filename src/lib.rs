@@ -32,7 +32,7 @@ const BULLET_COLLISION_POINTS: &[Vec2] = &[Vec2::new(-0.1, 0.1), Vec2::new(-0.1,
 
 struct TanksWorldData {
     camera: Camera2d,
-    player_tank: Tank,
+    player_tank: Option<Tank>,
     enemy_tanks: WorldVec<Tank>,
     bullets: WorldVec<Bullet>,
     world_borders: Vec<Polygon2d>,
@@ -141,11 +141,11 @@ fn startup(input_manager: &mut InputManager, render_engine: &RenderEngine) -> (T
                 aspect_ratio: render_engine.aspect_ratio,
             })
         ),
-        player_tank: Tank { 
+        player_tank: Some(Tank { 
             transform2d: Transform2d::new(Vec2::splat(0.0), 0.0, Vec2::splat(1.0)), 
             cannon_rotation: 0.0,
             collider: Polygon2d::new(TANK_COLLISION_POINTS[0].to_vec(), Vec2::splat(0.0), 0.0, green_color),
-        }, 
+        }), 
         enemy_tanks, 
         bullets: WorldVec::<Bullet>::new(),
         world_borders: vec![
@@ -169,67 +169,71 @@ fn update(tanks_world_data: &mut TanksWorldData, input_manager: &InputManager) {
 }
 
 fn update_player_tank_controller(tanks_world_data: &mut TanksWorldData, input_manager: &InputManager) {
-    let tank_transform2d = &mut tanks_world_data.player_tank.transform2d;
+    if let Some(player_tank) = &mut tanks_world_data.player_tank {
+        let tank_transform2d = &mut player_tank.transform2d;
 
-    let rotation_speed = 0.5;
-    let movement_speed = 0.005;
+        let rotation_speed = 0.5;
+        let movement_speed = 0.005;
 
-    let left_key_state = input_manager.get_key_state("left").unwrap();
-    let right_key_state = input_manager.get_key_state("right").unwrap();
-    let up_key_state = input_manager.get_key_state("up").unwrap();
-    let down_key_state = input_manager.get_key_state("down").unwrap();
-    let shoot_key_state = input_manager.get_key_state("shoot").unwrap();
+        let left_key_state = input_manager.get_key_state("left").unwrap();
+        let right_key_state = input_manager.get_key_state("right").unwrap();
+        let up_key_state = input_manager.get_key_state("up").unwrap();
+        let down_key_state = input_manager.get_key_state("down").unwrap();
+        let shoot_key_state = input_manager.get_key_state("shoot").unwrap();
 
-    let mut movement_direction = IVec2::new(0, 0);
-    if left_key_state.get_is_down() {
-        movement_direction.x -= 1;
-    }
-    if right_key_state.get_is_down() {
-        movement_direction.x += 1;
-    }
-    if up_key_state.get_is_down() {
-        movement_direction.y += 1;
-    }
-    if down_key_state.get_is_down() {
-        movement_direction.y -= 1;
-    }
-
-    if movement_direction.x != 0 || movement_direction.y != 0 {
-        let target_degrees = f32::atan2(movement_direction.y as f32, movement_direction.x as f32).to_degrees();
-        let target_degrees_constrained = (target_degrees + 360.0) % 360.0;
-
-        let current_rotation = tank_transform2d.get_rotation();
-
-        let mut rotation_diff_degrees = target_degrees_constrained - current_rotation;
-        let rotation_diff_degrees_abs = f32::abs(rotation_diff_degrees);
-        if rotation_diff_degrees_abs > 180.0 {rotation_diff_degrees *= -1.0; }
-
-        if rotation_diff_degrees_abs < 0.0001 {
-            tank_transform2d.set_rotation(target_degrees_constrained);
+        let mut movement_direction = IVec2::new(0, 0);
+        if left_key_state.get_is_down() {
+            movement_direction.x -= 1;
         }
-        else {
-            tank_transform2d.rotate(rotation_diff_degrees.signum() * rotation_speed);
+        if right_key_state.get_is_down() {
+            movement_direction.x += 1;
+        }
+        if up_key_state.get_is_down() {
+            movement_direction.y += 1;
+        }
+        if down_key_state.get_is_down() {
+            movement_direction.y -= 1;
         }
 
-        let movement_vector = Vec2::new(tank_transform2d.get_rotation().to_radians().cos(), tank_transform2d.get_rotation().to_radians().sin());
-        tank_transform2d.translate(movement_vector * movement_speed); 
-    }
+        if movement_direction.x != 0 || movement_direction.y != 0 {
+            let target_degrees = f32::atan2(movement_direction.y as f32, movement_direction.x as f32).to_degrees();
+            let target_degrees_constrained = (target_degrees + 360.0) % 360.0;
 
-    let pixel_mouse_coords = input_manager.get_mouse_physical();
-    let mouse_coords = tanks_world_data.camera.convert_screen_space_to_world_space(pixel_mouse_coords, tanks_world_data.window_size);
-    let cannon_center = tanks_world_data.player_tank.transform2d.get_translation() + Vec2::new(0.0, 0.01875);
-    let tank_mouse_difference = mouse_coords.xy() - cannon_center;
-    tanks_world_data.player_tank.cannon_rotation = (f32::atan2(tank_mouse_difference.y, tank_mouse_difference.x).to_degrees() + 360.0) % 360.0;
+            let current_rotation = tank_transform2d.get_rotation();
 
-    if shoot_key_state.get_was_pressed() {
-        let bullet = Bullet {
-            transform2d: Transform2d::new(tanks_world_data.player_tank.transform2d.get_translation(), tanks_world_data.player_tank.cannon_rotation, Vec2::splat(1.0)),
-            velocity: 0.01,
-            collider: Polygon2d::new(BULLET_COLLISION_POINTS.to_vec(), tanks_world_data.player_tank.transform2d.get_translation(), tanks_world_data.player_tank.cannon_rotation, Vec3::new(0.0, 1.0, 0.0)),
-            bounces: 0,
-            max_bounces: 4,
-        };
-        tanks_world_data.bullets.push(bullet);
+            let mut rotation_diff_degrees = target_degrees_constrained - current_rotation;
+            let rotation_diff_degrees_abs = f32::abs(rotation_diff_degrees);
+            if rotation_diff_degrees_abs > 180.0 {rotation_diff_degrees *= -1.0; }
+
+            if rotation_diff_degrees_abs < 0.0001 {
+                tank_transform2d.set_rotation(target_degrees_constrained);
+            }
+            else {
+                tank_transform2d.rotate(rotation_diff_degrees.signum() * rotation_speed);
+            }
+
+            let movement_vector = Vec2::new(tank_transform2d.get_rotation().to_radians().cos(), tank_transform2d.get_rotation().to_radians().sin());
+            tank_transform2d.translate(movement_vector * movement_speed); 
+        }
+
+        let pixel_mouse_coords = input_manager.get_mouse_physical();
+        let mouse_coords = tanks_world_data.camera.convert_screen_space_to_world_space(pixel_mouse_coords, tanks_world_data.window_size);
+        let cannon_center = player_tank.transform2d.get_translation() + Vec2::new(0.0, 0.01875);
+        let tank_mouse_difference = mouse_coords.xy() - cannon_center;
+        player_tank.cannon_rotation = (f32::atan2(tank_mouse_difference.y, tank_mouse_difference.x).to_degrees() + 360.0) % 360.0;
+
+        if shoot_key_state.get_was_pressed() {
+            let offset_vector = Vec2::new(player_tank.cannon_rotation.to_radians().cos(), player_tank.cannon_rotation.to_radians().sin());
+            let translation = player_tank.transform2d.get_translation() + (offset_vector * 0.5);
+            let bullet = Bullet {
+                transform2d: Transform2d::new(translation, player_tank.cannon_rotation, Vec2::splat(1.0)),
+                velocity: 0.01,
+                collider: Polygon2d::new(BULLET_COLLISION_POINTS.to_vec(), translation, player_tank.cannon_rotation, Vec3::new(0.0, 1.0, 0.0)),
+                bounces: 0,
+                max_bounces: 4,
+            };
+            tanks_world_data.bullets.push(bullet);
+        }
     }
 }
 
@@ -242,9 +246,12 @@ fn update_bullet_movement(tanks_world_data: &mut TanksWorldData) {
 }
 
 fn update_collision_shapes(tanks_world_data: &mut TanksWorldData) {
-    let mut tanks = vec![&mut tanks_world_data.player_tank];
+    let mut tanks = Vec::<&mut Tank>::new();
     for enemy_tank in &mut tanks_world_data.enemy_tanks {
         tanks.push(enemy_tank);
+    }
+    if let Some(player_tank) = &mut tanks_world_data.player_tank {
+        tanks.push(player_tank);
     }
     for tank in tanks {
         let atlas_index = get_tank_atlas_index(tank.transform2d.get_rotation());
@@ -260,9 +267,12 @@ fn update_collision_shapes(tanks_world_data: &mut TanksWorldData) {
 }
 
 fn update_world_border_collisions(tanks_world_data: &mut TanksWorldData) {
-    let mut tanks = vec![&mut tanks_world_data.player_tank];
+    let mut tanks = Vec::<&mut Tank>::new();
     for enemy_tank in &mut tanks_world_data.enemy_tanks {
         tanks.push(enemy_tank);
+    }
+    if let Some(player_tank) = &mut tanks_world_data.player_tank {
+        tanks.push(player_tank);
     }
     for tank in tanks {
         for world_border in &tanks_world_data.world_borders {
@@ -274,12 +284,12 @@ fn update_world_border_collisions(tanks_world_data: &mut TanksWorldData) {
     }
 
     let mut remove_list = Vec::new();
-    for (index, bullet) in tanks_world_data.bullets.iter_mut().enumerate() {
+    for bullet in &mut tanks_world_data.bullets {
         for world_border in &tanks_world_data.world_borders {
             let intersection_result = bullet.collider.get_intersection_result(&world_border);
             if intersection_result.collision {
                 if bullet.bounces == bullet.max_bounces {
-                    remove_list.push(index);
+                    remove_list.push(bullet.get_index_handle());
                 }
                 else {
                     let direction_vector = Vec2::new(bullet.transform2d.get_rotation().to_radians().cos(), bullet.transform2d.get_rotation().to_radians().sin());
@@ -291,8 +301,9 @@ fn update_world_border_collisions(tanks_world_data: &mut TanksWorldData) {
         }
     }
 
-    for index in remove_list {
-        tanks_world_data.bullets.swap_remove(index);
+    for bullet_index_handle in remove_list {
+        let index_option = bullet_index_handle.borrow().clone();
+        tanks_world_data.bullets.swap_remove(index_option);
     }
     
 }
@@ -300,6 +311,21 @@ fn update_world_border_collisions(tanks_world_data: &mut TanksWorldData) {
 fn update_collision_tank_bullet(tanks_world_data: &mut TanksWorldData) {
     let mut tank_remove_list = Vec::new();
     let mut bullet_remove_list = Vec::new();
+
+    for bullet_1_index in 0..tanks_world_data.bullets.len() {
+        for bullet_2_index in 0..tanks_world_data.bullets.len() {
+            if bullet_1_index != bullet_2_index {
+                let bullet_1 = &tanks_world_data.bullets[bullet_1_index];
+                let bullet_2 = &tanks_world_data.bullets[bullet_2_index];
+                let intersection_result = bullet_1.collider.get_intersection_result(&bullet_2.collider);
+                if intersection_result.collision {
+                    bullet_remove_list.push(bullet_1.get_index_handle());
+                    bullet_remove_list.push(bullet_2.get_index_handle());
+                }
+            }
+        }
+    }
+
     for tank in &tanks_world_data.enemy_tanks {
         for bullet in &tanks_world_data.bullets {
             let intersection_result = tank.collider.get_intersection_result(&bullet.collider);
@@ -310,14 +336,29 @@ fn update_collision_tank_bullet(tanks_world_data: &mut TanksWorldData) {
         }
     }
 
+    let mut player_bullet_collision = false;
+    if let Some(player_tank) = &tanks_world_data.player_tank {
+        for bullet in &tanks_world_data.bullets {
+            let intersection_result = player_tank.collider.get_intersection_result(&bullet.collider);
+            if intersection_result.collision {
+                player_bullet_collision = true;
+                bullet_remove_list.push(bullet.get_index_handle());
+            }
+        }
+    }
+
+    if player_bullet_collision {
+        tanks_world_data.player_tank = None;
+    }
+
     for tank_index_handle in tank_remove_list {
-        let index = tank_index_handle.borrow().clone();
-        tanks_world_data.enemy_tanks.swap_remove(index);
+        let index_option = tank_index_handle.borrow().clone();
+        tanks_world_data.enemy_tanks.swap_remove(index_option);
     }
 
     for bullet_index_handle in bullet_remove_list {
-        let index = bullet_index_handle.borrow().clone();
-        tanks_world_data.bullets.swap_remove(index);
+        let index_option = bullet_index_handle.borrow().clone();
+        tanks_world_data.bullets.swap_remove(index_option);
     }
 }
 
@@ -340,9 +381,12 @@ fn prepare(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksR
 
 fn prepare_tanks(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksRenderData, render_engine: &RenderEngine) {
     tanks_render_data.render_tank_instances.clear();
-    let mut tanks = vec![&tanks_world_data.player_tank];
+    let mut tanks = Vec::<&Tank>::new();
     for enemy_tank in &tanks_world_data.enemy_tanks {
         tanks.push(enemy_tank);
+    }
+    if let Some(player_tank) = &tanks_world_data.player_tank {
+        tanks.push(player_tank);
     }
     for tank in tanks {
         let base_atlas_index = get_tank_atlas_index(tank.transform2d.get_rotation());
@@ -370,7 +414,10 @@ fn prepare_tanks(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut 
 
 fn prepare_debug_lines(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksRenderData, render_engine: &RenderEngine) {
     tanks_render_data.debug_line_instances.clear();
-    let mut polygon2ds = vec![&tanks_world_data.player_tank.collider];
+    let mut polygon2ds = Vec::new();
+    if let Some(player_tank) = &mut tanks_world_data.player_tank {
+        polygon2ds.push(&player_tank.collider);
+    }
     for tank in &tanks_world_data.enemy_tanks {
         polygon2ds.push(&tank.collider);
     }
