@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use xenofrost::core::app::App;
 use xenofrost::core::input_manager::{InputManager, KeyCode};
 use xenofrost::core::math::bounding2d::Polygon2d;
@@ -10,7 +12,8 @@ use xenofrost::core::render_engine::wgpu::BufferUsages;
 use xenofrost::core::render_engine::{DrawMesh, bytemuck, wgpu};
 use xenofrost::core::render_engine::{RenderEngine, create_command_encoder};
 use xenofrost::core::math::{IVec2, Mat4, Quat, Transform2d, Vec2, Vec2Swizzles, Vec3, Vec3Swizzles};
-use xenofrost::core::utilities::{Timer, WorldVec};
+use xenofrost::core::utilities::WorldVec;
+use xenofrost::core::world::{Animation2d, AnimationFrame2d, AnimationObject2d};
 use xenofrost::core::world::camera::{Camera2d, CameraProjection, OrthographicProjection};
 use xenofrost::include_bytes_from_project_path;
 
@@ -36,7 +39,8 @@ struct TanksWorldData {
     camera: Camera2d,
     player_tank: Option<Tank>,
     enemy_tanks: WorldVec<Tank>,
-    tank_explosion_animation_list: WorldVec<TankExplosionAnimation>,
+    explosion_animation: Rc<Animation2d>,
+    animation_list: WorldVec<AnimationObject2d>,
     bullets: WorldVec<Bullet>,
     world_borders: Vec<Polygon2d>,
     window_size: IVec2,
@@ -68,22 +72,6 @@ impl Tank {
             transform2d,
             cannon_rotation,
             collider: Polygon2d::new(TANK_COLLISION_POINTS[0].to_vec(), Vec2::splat(0.0), 0.0, green_color),
-        }
-    }
-}
-
-struct TankExplosionAnimation {
-    transform2d: Transform2d,
-    atlas_index: u32,
-    explosion_timer: Timer,
-}
-
-impl TankExplosionAnimation {
-    fn new(transform2d: Transform2d) -> Self {
-        Self {
-            transform2d,
-            atlas_index: 0,
-            explosion_timer: Timer::create_timer_with_seconds(0.75)
         }
     }
 }
@@ -129,6 +117,13 @@ fn startup(input_manager: &mut InputManager, render_engine: &RenderEngine) -> (T
 
     let debug_lines_pipeline = create_debug_lines_pipeline2d(&render_engine.device, &render_engine.config, &camera_bind_group_layout, &color_bind_group_layout);
 
+    let tank_texture_atlas_util = TextureAtlasUtil::new(128, 128, tanks_texture_atlas.width, tanks_texture_atlas.height);
+    
+    let mut explosion_animation = Animation2d::new();
+    explosion_animation.add_animation_frame(AnimationFrame2d::new_from_seconds(0.75, tank_texture_atlas_util.get_texture_coords_from_atlas_coords(0, 4)));
+    explosion_animation.add_animation_frame(AnimationFrame2d::new_from_seconds(0.75, tank_texture_atlas_util.get_texture_coords_from_atlas_coords(1, 4)));
+    explosion_animation.add_animation_frame(AnimationFrame2d::new_from_seconds(0.75, tank_texture_atlas_util.get_texture_coords_from_atlas_coords(2, 4)));
+
     let tanks_render_data = TanksRenderData { 
         atlas_quad_mesh: create_atlas_quad_mesh(&render_engine.device), 
         atlas_pipeline: create_atlas_pipeline2d(&render_engine.device, &render_engine.config, &camera_bind_group_layout, &texture_bind_group_layout), 
@@ -141,7 +136,7 @@ fn startup(input_manager: &mut InputManager, render_engine: &RenderEngine) -> (T
             &tanks_texture_atlas.view, 
             &tanks_texture_atlas.sampler
         ),
-        tank_texture_atlas_util: TextureAtlasUtil::new(128, 128, tanks_texture_atlas.width, tanks_texture_atlas.height),
+        tank_texture_atlas_util,
         texture_atlas_util: TextureCoordUtil::new(tanks_texture_atlas.width, tanks_texture_atlas.height),
         render_camera: RenderCamera::new(&render_engine.device, &camera_bind_group_layout, "Primary Camera"),
         atlas_instances: VecBuffer::new(&render_engine.device, "Render Tank Instances", wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST), 
@@ -176,7 +171,8 @@ fn startup(input_manager: &mut InputManager, render_engine: &RenderEngine) -> (T
             0.0)
         ), 
         enemy_tanks,
-        tank_explosion_animation_list: WorldVec::new(), 
+        explosion_animation: Rc::new(explosion_animation),
+        animation_list: WorldVec::new(), 
         bullets: WorldVec::new(),
         world_borders: vec![
             Polygon2d::new(vec![Vec2::new(-8.5, 4.5), Vec2::new(-8.5, -4.5), Vec2::new(-8.0, -4.5), Vec2::new(-8.0, 4.5)], Vec2::splat(0.0), 0.0, green_color),
@@ -382,8 +378,8 @@ fn update_collision_tank_bullet(tanks_world_data: &mut TanksWorldData) {
 
     if player_bullet_collision {
         let explosion_transform = tanks_world_data.player_tank.as_ref().unwrap().transform2d.clone();
-        let explosion_animation = TankExplosionAnimation::new(explosion_transform);
-        tanks_world_data.tank_explosion_animation_list.push(explosion_animation);
+        let explosion_animation_object = AnimationObject2d::new(explosion_transform, Rc::clone(&tanks_world_data.explosion_animation));
+        tanks_world_data.animation_list.push(explosion_animation_object);
         tanks_world_data.player_tank = None;
     }
 
@@ -392,8 +388,8 @@ fn update_collision_tank_bullet(tanks_world_data: &mut TanksWorldData) {
         let removed_tank_option = tanks_world_data.enemy_tanks.swap_remove(index_option);
         if let Some(removed_tank) = removed_tank_option {
             let explosion_transform = removed_tank.transform2d.clone();
-            let explosion_animation = TankExplosionAnimation::new(explosion_transform);
-            tanks_world_data.tank_explosion_animation_list.push(explosion_animation);
+            let explosion_animation_object = AnimationObject2d::new(explosion_transform, Rc::clone(&tanks_world_data.explosion_animation));
+            tanks_world_data.animation_list.push(explosion_animation_object);
         }
     }
 
@@ -405,25 +401,18 @@ fn update_collision_tank_bullet(tanks_world_data: &mut TanksWorldData) {
 
 fn update_explosion_animations(tanks_world_data: &mut TanksWorldData) {
     let mut explosion_remove_list = Vec::new();
-    for explosion_animation in &mut tanks_world_data.tank_explosion_animation_list {
-        if explosion_animation.explosion_timer.is_timer_expired() {
-            //TODO remove hardcoded value of 3 which represents the final sprite index
-            if explosion_animation.atlas_index == 2 {
-                explosion_remove_list.push(explosion_animation.get_index_handle());
-            }
-            else {
-                explosion_animation.atlas_index += 1;
-                explosion_animation.explosion_timer.initialize_timer();
-            }
+    for explosion_animation in &mut tanks_world_data.animation_list {
+        if explosion_animation.is_animation_complete() {
+            explosion_remove_list.push(explosion_animation.get_index_handle());
         }
         else {
-            explosion_animation.explosion_timer.run();
+            explosion_animation.run_animation();
         }
     }
 
     for index_handle in explosion_remove_list {
         let index_option = index_handle.borrow().clone();
-        tanks_world_data.tank_explosion_animation_list.swap_remove(index_option);
+        tanks_world_data.animation_list.swap_remove(index_option);
     }
 }
 
@@ -449,7 +438,7 @@ fn prepare_atlas_objects(tanks_world_data: &mut TanksWorldData, tanks_render_dat
 
     prepare_tanks(tanks_world_data, tanks_render_data);
     prepare_bullets(tanks_world_data, tanks_render_data);
-    prepare_explosion_animations(tanks_world_data, tanks_render_data);
+    prepare_animations(tanks_world_data, tanks_render_data);
 
     tanks_render_data.atlas_instances.update_buffer_data(&render_engine.device, &render_engine.queue);
 }
@@ -507,17 +496,17 @@ fn prepare_bullets(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mu
     }
 }
 
-fn prepare_explosion_animations(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksRenderData) {
-    for explosion_animation in &tanks_world_data.tank_explosion_animation_list {
+fn prepare_animations(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksRenderData) {
+    for animation in &tanks_world_data.animation_list {
         let sprite_size = tanks_render_data.tank_texture_atlas_util.get_atlas_size_in_tex_coords();
-        let explosion_texture_coords = tanks_render_data.tank_texture_atlas_util.get_texture_coords_from_atlas_coords(explosion_animation.atlas_index, 4);
-        let explosion_instance = InstanceAtlas {
-            model: Mat4::from_translation(Vec3::new(explosion_animation.transform2d.get_translation().x, explosion_animation.transform2d.get_translation().y, 0.1)),
-            tex_coords: explosion_texture_coords,
+        let animation_texture_coords = animation.get_texture_coords_for_current_frame();
+        let animation_instance = InstanceAtlas {
+            model: Mat4::from_translation(Vec3::new(animation.transform2d.get_translation().x, animation.transform2d.get_translation().y, 0.1)),
+            tex_coords: animation_texture_coords,
             sprite_size: sprite_size
         };
 
-        tanks_render_data.atlas_instances.push(explosion_instance);
+        tanks_render_data.atlas_instances.push(animation_instance);
     }
 }
 
