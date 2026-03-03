@@ -4,8 +4,9 @@ use xenofrost::core::app::App;
 use xenofrost::core::input_manager::{InputManager, KeyCode};
 use xenofrost::core::math::bounding2d::Polygon2d;
 use xenofrost::core::render_engine::buffer::{Buffer, VecBuffer};
+use xenofrost::core::render_engine::gui::font_renderer::{DefaultFonts, construct_string_instance_data, create_bitmap_font_pipeline, create_font_ratio_bind_group_layout, get_font_from_defaults, get_font_ratio};
 use xenofrost::core::render_engine::mesh::{Mesh, create_atlas_quad_mesh};
-use xenofrost::core::render_engine::pipeline::{InstanceAtlas, InstanceDebugLine, create_atlas_pipeline2d, create_color_bind_group_layout, create_debug_lines_pipeline2d};
+use xenofrost::core::render_engine::pipeline::{InstanceAtlas, InstanceDebugLine, create_aspect_ratio_bind_group_layout, create_atlas_pipeline2d, create_color_bind_group_layout, create_debug_lines_pipeline2d};
 use xenofrost::core::render_engine::render_camera::{RenderCamera, create_camera_bind_group_layout};
 use xenofrost::core::render_engine::texture::{Texture, TextureAtlasUtil, TextureCoordUtil, create_texture_bind_group, create_texture_bind_group_layout};
 use xenofrost::core::render_engine::wgpu::BufferUsages;
@@ -56,7 +57,14 @@ struct TanksRenderData {
     tank_texture_atlas_util: TextureAtlasUtil,
     texture_atlas_util: TextureCoordUtil,
     atlas_instances: VecBuffer<InstanceAtlas>,
-    debug_line_instances: Vec<InstanceDebugLine>
+    debug_line_instances: Vec<InstanceDebugLine>,
+    aspect_ratio_buffer: Buffer,
+    aspect_ratio_bind_group: wgpu::BindGroup,
+    font_ratio_buffer: Buffer,
+    font_ratio_bind_group: wgpu::BindGroup,
+    bitmap_font_pipeline: wgpu::RenderPipeline,
+    open_sans_font_texture_atlas_bind_group: wgpu::BindGroup,
+    open_sans_font_instances: Buffer,
 }
 
 struct Tank {
@@ -124,6 +132,36 @@ fn startup(input_manager: &mut InputManager, render_engine: &RenderEngine) -> (T
     explosion_animation.add_animation_frame(AnimationFrame2d::new_from_seconds(0.75, tank_texture_atlas_util.get_texture_coords_from_atlas_coords(1, 4)));
     explosion_animation.add_animation_frame(AnimationFrame2d::new_from_seconds(0.75, tank_texture_atlas_util.get_texture_coords_from_atlas_coords(2, 4)));
 
+    let aspect_ratio_bind_group_layout = create_aspect_ratio_bind_group_layout(&render_engine.device);
+    let aspect_ratio_buffer = Buffer::create_buffer_during_init(&render_engine.device, String::from("Aspect Ratio Buffer"), bytemuck::bytes_of(&render_engine.aspect_ratio), wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST);
+    //TODO create my own bind group struct so no direct wgpu is required
+    let aspect_ratio_bind_group = render_engine.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Aspect Ratio Bind Group"),
+            layout: &aspect_ratio_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: aspect_ratio_buffer.as_entire_binding(),
+                }
+            ],
+        });
+    
+    let font_ratio_bind_group_layout = create_font_ratio_bind_group_layout(&render_engine.device);
+    let font_ratio = get_font_ratio(render_engine.window_width as f32);
+    let font_ratio_buffer = Buffer::create_buffer_during_init(&render_engine.device, String::from("Font Ratio Buffer"), bytemuck::bytes_of(&font_ratio), wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST);
+    let font_ratio_bind_group = render_engine.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Font Ratio Bind Group"),
+        layout: &font_ratio_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: font_ratio_buffer.as_entire_binding(),
+            }
+        ]
+    });
+
+    let (open_sans_font_spec,open_sans_font_texture_atlas) = get_font_from_defaults(DefaultFonts::OpenSans, &render_engine.device, &render_engine.queue);
+    
     let tanks_render_data = TanksRenderData { 
         atlas_quad_mesh: create_atlas_quad_mesh(&render_engine.device), 
         atlas_pipeline: create_atlas_pipeline2d(&render_engine.device, &render_engine.config, &camera_bind_group_layout, &texture_bind_group_layout), 
@@ -140,7 +178,22 @@ fn startup(input_manager: &mut InputManager, render_engine: &RenderEngine) -> (T
         texture_atlas_util: TextureCoordUtil::new(tanks_texture_atlas.width, tanks_texture_atlas.height),
         render_camera: RenderCamera::new(&render_engine.device, &camera_bind_group_layout, "Primary Camera"),
         atlas_instances: VecBuffer::new(&render_engine.device, "Render Tank Instances", wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST), 
-        debug_line_instances: Vec::new()
+        debug_line_instances: Vec::new(),
+        aspect_ratio_buffer,
+        aspect_ratio_bind_group,
+        font_ratio_buffer,
+        font_ratio_bind_group,  
+        bitmap_font_pipeline: create_bitmap_font_pipeline(&render_engine.device, &render_engine.config, &texture_bind_group_layout, &aspect_ratio_bind_group_layout, &font_ratio_bind_group_layout),
+        open_sans_font_texture_atlas_bind_group: create_texture_bind_group(
+            &render_engine.device, "Open Sans Texture Atlas Bind Group", 
+            &texture_bind_group_layout, 
+            &open_sans_font_texture_atlas.view, 
+            &open_sans_font_texture_atlas.sampler),
+        open_sans_font_instances: Buffer::create_buffer_during_init(
+            &render_engine.device,
+            String::from("OpenSans Instance Buffer"), 
+            bytemuck::cast_slice(&construct_string_instance_data("Initial Test. INITIAL TEST", Vec2::new(-1.0, 0.5), 1.0, Vec3::new(0.0, 0.0, 0.0), &open_sans_font_spec)),
+            wgpu::BufferUsages::VERTEX)
     };
 
     let green_color = Vec3::new(0.0, 1.0, 0.0);
@@ -416,9 +469,13 @@ fn update_explosion_animations(tanks_world_data: &mut TanksWorldData) {
     }
 }
 
-fn resize_event(tanks_world_data: &mut TanksWorldData, _tanks_render_data: &mut TanksRenderData, render_engine: &RenderEngine) {
+fn resize_event(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksRenderData, render_engine: &RenderEngine) {
     tanks_world_data.window_size = IVec2::new(render_engine.window_width as i32, render_engine.window_height as i32);
     tanks_world_data.camera.update_aspect_ratio(render_engine.aspect_ratio);
+    tanks_render_data.aspect_ratio_buffer.update_buffer_data(&render_engine.device, &render_engine.queue, bytemuck::bytes_of(&render_engine.aspect_ratio));
+    
+    let font_ratio = get_font_ratio(render_engine.window_width as f32);
+    tanks_render_data.font_ratio_buffer.update_buffer_data(&render_engine.device, &render_engine.queue, bytemuck::bytes_of(&font_ratio));
 }
 
 fn prepare(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksRenderData, render_engine: &RenderEngine) {
@@ -580,6 +637,7 @@ fn render(tanks_render_data: &TanksRenderData, render_engine: &RenderEngine) -> 
 
     render_atlas_objects(tanks_render_data, &mut primary_render_pass);
     render_debug_lines(tanks_render_data, &mut primary_render_pass);
+    render_opensans_font(tanks_render_data, &mut primary_render_pass);
 
     drop(primary_render_pass);
     render_engine.render_frame_present(output, encoder);
@@ -600,6 +658,15 @@ fn render_debug_lines<'a: 'b, 'b>(tanks_render_data: &'a TanksRenderData, primar
         primary_render_pass.set_bind_group(1, &debug_lines.color_bind_group, &[]);
         primary_render_pass.draw_mesh(&debug_lines.mesh, &tanks_render_data.render_camera.camera_bind_group);
     }
+}
+
+fn render_opensans_font<'a: 'b, 'b>(tanks_render_data: &'a TanksRenderData, primary_render_pass: &'b mut wgpu::RenderPass<'a>) {
+    primary_render_pass.set_pipeline(&tanks_render_data.bitmap_font_pipeline);
+    primary_render_pass.set_vertex_buffer(1, tanks_render_data.open_sans_font_instances.slice(..));
+    primary_render_pass.set_bind_group(0, &tanks_render_data.open_sans_font_texture_atlas_bind_group, &[]);
+    primary_render_pass.set_bind_group(1, &tanks_render_data.aspect_ratio_bind_group, &[]);
+    primary_render_pass.set_bind_group(2, &tanks_render_data.font_ratio_bind_group, &[]);
+    primary_render_pass.draw_mesh_instanced_no_camera(&tanks_render_data.atlas_quad_mesh, 0..23);
 }
 
 fn get_tank_atlas_index(rotation: f32) -> u32 {
