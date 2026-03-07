@@ -168,7 +168,7 @@ fn startup(input_manager: &mut InputManager, render_engine: &RenderEngine) -> (T
 
     let (open_sans_font_spec,open_sans_font_texture_atlas) = get_font_from_defaults(DefaultFonts::OpenSans, &render_engine.device, &render_engine.queue);
     let mut open_sans_font_instances = VecBuffer::new(&render_engine.device, "OpenSans Instances", wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST);
-    let mut text1 = construct_string_instance_data("Initial Test. INITIAL TEST", Vec2::new(-1.0, 0.5), 1.0, Vec3::new(0.0, 0.0, 0.0), false, &open_sans_font_spec);
+    let mut text1 = construct_string_instance_data("Initial Test. INITIAL TEST", Vec2::new(-1.0, 0.5), 1.0, Vec3::new(1.0, 1.0, 1.0), false, &open_sans_font_spec);
     open_sans_font_instances.append(&mut text1);
     let mut text2 = construct_string_instance_data("Scales with the screen!", Vec2::new(0.0, -0.5), 1.0, Vec3::new(1.0, 1.0, 1.0), true, &open_sans_font_spec);
     open_sans_font_instances.append(&mut text2);
@@ -178,9 +178,9 @@ fn startup(input_manager: &mut InputManager, render_engine: &RenderEngine) -> (T
     
     let (open_sans_sdf_font_spec, open_sans_sdf_font_texture_atlas) = get_font_from_defaults(DefaultFonts::OpenSansSDF, &render_engine.device, &render_engine.queue);
     let mut open_sans_sdf_font_instances = VecBuffer::new(&render_engine.device, "OpenSans SDF Instances", wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST);
-    let mut text3 = construct_sdf_string_instance_data("Initial Test. INITIAL TEST", Vec2::new(0.0, 0.7), 1.0, Vec3::new(1.0, 1.0, 0.0), false, &open_sans_sdf_font_spec);
+    let mut text3 = construct_sdf_string_instance_data("Initial Test. INITIAL TEST", Vec2::new(0.0, 0.7), 1.0, Vec3::new(1.0, 1.0, 1.0), false, Vec3::new(0.0, 0.0, 0.0), 0.0, Vec3::new(1.0, 0.0, 0.0), 0.25, Vec2::new(0.0, 0.0), &open_sans_sdf_font_spec);
     open_sans_sdf_font_instances.append(&mut text3);
-    let mut text4 = construct_sdf_string_instance_data("Scales with the screen!", Vec2::new(0.0, 0.5), 1.0, Vec3::new(0.0, 1.0, 1.0), true, &open_sans_sdf_font_spec);
+    let mut text4 = construct_sdf_string_instance_data("Scales with the screen!", Vec2::new(0.0, 0.5), 1.0, Vec3::new(1.0, 1.0, 1.0), true, Vec3::new(0.0, 0.0, 0.0), 0.1, Vec3::new(0.0, 0.0, 1.0), 0.25, Vec2::new(0.0, 0.0), &open_sans_sdf_font_spec);
     open_sans_sdf_font_instances.append(&mut text4);
     open_sans_sdf_font_instances.update_buffer_data(&render_engine.device, &render_engine.queue);
 
