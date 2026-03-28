@@ -4,6 +4,8 @@ use xenofrost::core::app::App;
 use xenofrost::core::input_manager::{InputManager, KeyCode};
 use xenofrost::core::math::bounding2d::Polygon2d;
 use xenofrost::core::render_engine::buffer::{Buffer, VecBuffer};
+use xenofrost::core::render_engine::gui::widgets::gui_rect::GuiRect;
+use xenofrost::core::render_engine::gui::{GuiManager, GuiRenderer};
 use xenofrost::core::render_engine::gui::font_renderer::{CharacterInstance, DefaultFonts, FontSpecification, SdfCharacterInstance, construct_sdf_string_instance_data, construct_string_instance_data, create_bitmap_font_pipeline, create_font_ratio_bind_group_layout, create_sdf_aemrange_bind_group_layout, create_sdf_font_pipeline, get_font_from_defaults, get_font_ratio, get_sdf_aem_distance_bind_group};
 use xenofrost::core::render_engine::mesh::{Mesh, create_atlas_quad_mesh};
 use xenofrost::core::render_engine::pipeline::{InstanceAtlas, InstanceDebugLine, create_aspect_ratio_bind_group_layout, create_atlas_pipeline2d, create_color_bind_group_layout, create_debug_lines_pipeline2d};
@@ -45,6 +47,7 @@ struct TanksWorldData {
     bullets: WorldVec<Bullet>,
     world_borders: Vec<Polygon2d>,
     window_size: IVec2,
+    gui_manager: GuiManager
 }
 
 struct TanksRenderData {
@@ -71,6 +74,7 @@ struct TanksRenderData {
     open_sans_sdf_font_texture_atlas_bind_group: wgpu::BindGroup,
     open_sans_sdf_font_spec: FontSpecification,
     open_sans_sdf_font_instances: VecBuffer<SdfCharacterInstance>,
+    gui_renderer: GuiRenderer
 }
 
 struct Tank {
@@ -223,7 +227,8 @@ fn startup(input_manager: &mut InputManager, render_engine: &RenderEngine) -> (T
             &texture_bind_group_layout, 
             &open_sans_sdf_font_texture_atlas.view, 
             &open_sans_sdf_font_texture_atlas.sampler),
-        open_sans_sdf_font_instances
+        open_sans_sdf_font_instances,
+        gui_renderer: GuiRenderer::new(&render_engine.device, &render_engine.config, &texture_bind_group_layout, &aspect_ratio_bind_group_layout)
     };
 
     let green_color = Vec3::new(0.0, 1.0, 0.0);
@@ -237,6 +242,9 @@ fn startup(input_manager: &mut InputManager, render_engine: &RenderEngine) -> (T
         Transform2d::new(Vec2::new(-2.0, 2.0), 72.0, Vec2::splat(1.0)), 
         232.0)
     );
+
+    let mut gui_manager = GuiManager::new();
+    gui_manager.add_gui(Box::new(GuiRect::new(Vec2::new(0.0, 0.5), Vec2::new(0.1, 0.2), Vec3::new(1.0, 0.0, 0.0))));
 
     let tanks_world_data = TanksWorldData { 
         camera: Camera2d::new(
@@ -263,7 +271,8 @@ fn startup(input_manager: &mut InputManager, render_engine: &RenderEngine) -> (T
             Polygon2d::new(vec![Vec2::new(-8.0, 5.0), Vec2::new(-8.0, 4.5), Vec2::new(8.0, 4.5), Vec2::new(8.0, 5.0)], Vec2::splat(0.0), 0.0, green_color),
             Polygon2d::new(vec![Vec2::new(-8.0, -4.5), Vec2::new(-8.0, -5.0), Vec2::new(8.0, -5.0), Vec2::new(8.0, -4.5)], Vec2::splat(0.0), 0.0, green_color)
         ],
-        window_size: IVec2::new(render_engine.window_width as i32, render_engine.window_height as i32) 
+        window_size: IVec2::new(render_engine.window_width as i32, render_engine.window_height as i32),
+        gui_manager
     };
 
     (tanks_world_data, tanks_render_data)
@@ -517,6 +526,7 @@ fn prepare(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksR
     );
     
     prepare_atlas_objects(tanks_world_data, tanks_render_data, render_engine);
+    tanks_render_data.gui_renderer.prepare_gui_render_instances(&tanks_world_data.gui_manager, &render_engine.device, &render_engine.queue);
     prepare_debug_lines(tanks_world_data, tanks_render_data, render_engine);
 }
 
@@ -669,6 +679,7 @@ fn render(tanks_render_data: &TanksRenderData, render_engine: &RenderEngine) -> 
     render_debug_lines(tanks_render_data, &mut primary_render_pass);
     render_opensans_font(tanks_render_data, &mut primary_render_pass);
     render_opensans_sdf_font(tanks_render_data, &mut primary_render_pass);
+    tanks_render_data.gui_renderer.render(&mut primary_render_pass, &tanks_render_data.atlas_quad_mesh, &tanks_render_data.tanks_texture_atlas_bind_group, &tanks_render_data.aspect_ratio_bind_group);
 
     drop(primary_render_pass);
     render_engine.render_frame_present(output, encoder);
