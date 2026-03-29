@@ -5,7 +5,7 @@ use xenofrost::core::input_manager::{InputManager, KeyCode};
 use xenofrost::core::math::bounding2d::Polygon2d;
 use xenofrost::core::render_engine::buffer::{Buffer, VecBuffer};
 use xenofrost::core::render_engine::gui::widgets::gui_rect::GuiRect;
-use xenofrost::core::render_engine::gui::{GuiManager, GuiRenderer};
+use xenofrost::core::render_engine::gui::{GuiManager, GuiRenderer, GuiValue};
 use xenofrost::core::render_engine::gui::font_renderer::{CharacterInstance, DefaultFonts, FontSpecification, SdfCharacterInstance, construct_sdf_string_instance_data, construct_string_instance_data, create_bitmap_font_pipeline, create_font_ratio_bind_group_layout, create_sdf_aemrange_bind_group_layout, create_sdf_font_pipeline, get_font_from_defaults, get_font_ratio, get_sdf_aem_distance_bind_group};
 use xenofrost::core::render_engine::mesh::{Mesh, create_atlas_quad_mesh};
 use xenofrost::core::render_engine::pipeline::{InstanceAtlas, InstanceDebugLine, create_aspect_ratio_bind_group_layout, create_atlas_pipeline2d, create_color_bind_group_layout, create_debug_lines_pipeline2d};
@@ -244,7 +244,20 @@ fn startup(input_manager: &mut InputManager, render_engine: &RenderEngine) -> (T
     );
 
     let mut gui_manager = GuiManager::new();
-    gui_manager.add_gui(Box::new(GuiRect::new(Vec2::new(0.0, 0.5), Vec2::new(0.1, 0.2), Vec3::new(1.0, 0.0, 0.0))));
+    gui_manager.add_gui(Box::new(GuiRect::new(
+        GuiValue::Pixels(50.0), 
+        GuiValue::Pixels(100.0), 
+        GuiValue::Pixels(40.0),
+        GuiValue::Pixels(10.0),
+        Vec3::new(1.0, 0.0, 0.0)
+    )));
+    gui_manager.add_gui(Box::new(GuiRect::new(
+        GuiValue::Percent(50.0), 
+        GuiValue::Percent(50.0), 
+        GuiValue::Percent(20.0),
+        GuiValue::Percent(10.0),
+        Vec3::new(0.0, 1.0, 0.0)
+    )));
 
     let tanks_world_data = TanksWorldData { 
         camera: Camera2d::new(
@@ -526,7 +539,7 @@ fn prepare(tanks_world_data: &mut TanksWorldData, tanks_render_data: &mut TanksR
     );
     
     prepare_atlas_objects(tanks_world_data, tanks_render_data, render_engine);
-    tanks_render_data.gui_renderer.prepare_gui_render_instances(&tanks_world_data.gui_manager, &render_engine.device, &render_engine.queue);
+    tanks_render_data.gui_renderer.prepare_gui_render_instances(&tanks_world_data.gui_manager, render_engine);
     prepare_debug_lines(tanks_world_data, tanks_render_data, render_engine);
 }
 
@@ -679,7 +692,7 @@ fn render(tanks_render_data: &TanksRenderData, render_engine: &RenderEngine) -> 
     render_debug_lines(tanks_render_data, &mut primary_render_pass);
     render_opensans_font(tanks_render_data, &mut primary_render_pass);
     render_opensans_sdf_font(tanks_render_data, &mut primary_render_pass);
-    tanks_render_data.gui_renderer.render(&mut primary_render_pass, &tanks_render_data.atlas_quad_mesh, &tanks_render_data.tanks_texture_atlas_bind_group, &tanks_render_data.aspect_ratio_bind_group);
+    tanks_render_data.gui_renderer.render(&mut primary_render_pass, &tanks_render_data.tanks_texture_atlas_bind_group, &tanks_render_data.aspect_ratio_bind_group);
 
     drop(primary_render_pass);
     render_engine.render_frame_present(output, encoder);
